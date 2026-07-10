@@ -1,0 +1,24 @@
+.DS_Store
+build/
+results/
+cmake-build-*/
+.idea/
+.vscode/
+
+# neBEM working directory (regenerated on every solve)
+neBEMOut/
+
+# neBEM → ComponentGrid sampled-field cache (one ~9 MB file per geometry/field point,
+# regenerated automatically when missing)
+thgem_field_*.txt
+
+# Magboltz property sidecar (rewritten on every run)
+*_props.csv
+
+# ROOT outputs
+*.root
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+*.pyo
