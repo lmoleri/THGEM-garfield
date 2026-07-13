@@ -872,6 +872,8 @@ class ResultsPanel(QTabWidget):
         self._wfield_cache: dict | None = None   # {x, y, W, Wx, Wy, electrode} arrays
         self._wfield_root_canvas  = None   # ROOT TCanvas for weighting-field maps
         self._wfield_objects: list = []
+        self._gas_canvas  = None   # ROOT TCanvas for Magboltz gas properties
+        self._gas_objects: list = []
         self._garfield = None              # cached ROOT.Garfield once libs are loaded
         self._garfield_failed = False      # don't retry the load after a failure
         self.config_panel = None           # set by MainWindow; live readout settings
@@ -2170,12 +2172,20 @@ class ResultsPanel(QTabWidget):
         geom    = self._track_geom or {}
         pitch   = geom.get("pitch_cm", 0.08)
         r_cm    = geom.get("r_hole_cm", 0.025)
-        n_wires = 0
-        x_wires = []                           # THGEM has holes, not wires
         z_drift = geom.get("z_drift_cm")
         z_anode = geom.get("z_anode_cm")
-        # In THGEM the drift axis is z (anode below, drift cathode above); reuse
-        # the TGC renderer with symmetric ranges centred on the plate.
+        # Plate faces (top of top-copper, bottom of bottom-copper); fall back to a
+        # thin slab around z = 0 if the derived values are absent.
+        z_top   = geom.get("z_top_cu_top_cm")
+        z_bot   = geom.get("z_bot_cu_bot_cm")
+        _diel_h = geom.get("z_diel_half_cm", 0.02)
+        if z_top is None:
+            z_top = _diel_h
+        if z_bot is None:
+            z_bot = -_diel_h
+        # The drift axis is z: anode plane below, perforated plate at the centre,
+        # drift cathode above.  The frame is a cube of half-size max_half centred on
+        # the plate; the z gap dominates, so the view spans many holes in x, y.
         gap     = max(abs(z_anode) if z_anode is not None else 0.25,
                       abs(z_drift) if z_drift is not None else 0.35)
         z_half  = gap
@@ -2263,63 +2273,70 @@ class ResultsPanel(QTabWidget):
                 ln.Draw("SAME")
                 self._tracks_objects.append(ln)
 
-            # ── Cathode planes (rectangular outlines, clipped to visible cube) ──
-            _hr = max_half * s
-            for y_cath, color in [(-gap, ROOT.kCyan - 7), (gap, ROOT.kYellow - 7)]:
-                if not (self._trk_pan_y - _hr <= y_cath <= self._trk_pan_y + _hr):
-                    continue
-                cx_min = max(-x_half, self._trk_pan_x - _hr)
-                cx_max = min(+x_half, self._trk_pan_x + _hr)
-                cz_min = max(-z_half, self._trk_pan_z - _hr)
-                cz_max = min(+z_half, self._trk_pan_z + _hr)
-                if cx_max <= cx_min or cz_max <= cz_min:
-                    continue  # cathode not in view
-                cx = np.array([cx_min, cx_max, cx_max, cx_min, cx_min], "f4")
-                cy = np.full(5, y_cath, "f4")
-                cz = np.array([cz_min, cz_min, cz_max, cz_max, cz_min], "f4")
-                pl = ROOT.TPolyLine3D(5, cx, cy, cz)
+            # ── THGEM geometry (electrode planes + perforated plate) ────────────
+            _hr = max_half * s   # visible half-range (cube half-size at this zoom)
+
+            def _draw_plane_z(z, color, width=2):
+                """Rectangle in the x,y plane at constant z, clipped to the view."""
+                if z is None or not (self._trk_pan_z - _hr <= z <= self._trk_pan_z + _hr):
+                    return
+                x0, x1 = self._trk_pan_x - _hr, self._trk_pan_x + _hr
+                y0, y1 = self._trk_pan_y - _hr, self._trk_pan_y + _hr
+                xs = np.array([x0, x1, x1, x0, x0], "f4")
+                ys = np.array([y0, y0, y1, y1, y0], "f4")
+                zs = np.full(5, z, "f4")
+                pl = ROOT.TPolyLine3D(5, xs, ys, zs)
                 pl.SetLineColor(color)
-                pl.SetLineWidth(2)
+                pl.SetLineWidth(width)
                 pl.Draw("SAME")
                 self._tracks_objects.append(pl)
 
-            # ── Anode wires (cylinder wireframe, actual diameter, semi-transparent) ──
-            _wire_alpha = 0.45
-            _n_sides = 12                                     # 12-sided polygon approximation
-            _angles = np.linspace(0.0, 2.0 * np.pi, _n_sides + 1)  # closed polygon
-            # z extent of wires clipped to the visible cube
-            _z_lo = max(-z_half, self._trk_pan_z - _hr)
-            _z_hi = min(+z_half, self._trk_pan_z + _hr)
-            for x_w in x_wires:
-                if not (self._trk_pan_x - _hr <= x_w <= self._trk_pan_x + _hr):
-                    continue
-                xs_c = (x_w + r_cm * np.cos(_angles)).astype("f4")
-                ys_c = (r_cm * np.sin(_angles)).astype("f4")
-                if _z_hi > _z_lo:
-                    # end rings at the visible z boundaries — always within the
-                    # frame box, so the cross-section polygon is visible at any zoom
-                    for z_ring in (_z_lo, _z_hi):
-                        zs_c = np.full(_n_sides + 1, z_ring, "f4")
-                        ring = ROOT.TPolyLine3D(_n_sides + 1, xs_c, ys_c, zs_c)
-                        ring.SetLineColorAlpha(ROOT.kYellow + 1, _wire_alpha)
-                        ring.SetLineWidth(1)
-                        ring.Draw("SAME")
-                        self._tracks_objects.append(ring)
-                # longitudinal edges — z extent clipped to visible range
-                if _z_hi > _z_lo:
-                    for _a in _angles[:-1]:
-                        _xe = float(x_w + r_cm * np.cos(_a))
-                        _ye = float(r_cm * np.sin(_a))
-                        ln = ROOT.TPolyLine3D(
-                            2,
-                            np.array([_xe, _xe], "f4"),
-                            np.array([_ye, _ye], "f4"),
-                            np.array([_z_lo, _z_hi], "f4"),
-                        )
-                        ln.SetLineColorAlpha(ROOT.kYellow + 1, _wire_alpha)
-                        ln.SetLineWidth(1)
-                        ln.Draw("SAME")
-                        self._tracks_objects.append(ln)
+            def _draw_cylinder(cx, cy, z0, z1, color, alpha, n_sides=12):
+                """Wireframe cylinder (a hole) of radius r_cm between z0 and z1."""
+                ang = np.linspace(0.0, 2.0 * np.pi, n_sides + 1)
+                xs = (cx + r_cm * np.cos(ang)).astype("f4")
+                ys = (cy + r_cm * np.sin(ang)).astype("f4")
+                for zc in (z0, z1):                       # top and bottom rings
+                    zs = np.full(n_sides + 1, zc, "f4")
+                    ring = ROOT.TPolyLine3D(n_sides + 1, xs, ys, zs)
+                    ring.SetLineColorAlpha(color, alpha)
+                    ring.SetLineWidth(1)
+                    ring.Draw("SAME")
+                    self._tracks_objects.append(ring)
+                for a in ang[:-1:2]:                      # every other longitudinal edge
+                    xe = float(cx + r_cm * np.cos(a))
+                    ye = float(cy + r_cm * np.sin(a))
+                    ln = ROOT.TPolyLine3D(
+                        2, np.array([xe, xe], "f4"), np.array([ye, ye], "f4"),
+                        np.array([z0, z1], "f4"))
+                    ln.SetLineColorAlpha(color, alpha)
+                    ln.SetLineWidth(1)
+                    ln.Draw("SAME")
+                    self._tracks_objects.append(ln)
+
+            # Electrode planes and the two plate faces (span the visible x, y).
+            _draw_plane_z(z_drift, ROOT.kCyan - 7)       # drift cathode (top)
+            _draw_plane_z(z_anode, ROOT.kRed - 7)        # anode pad (bottom)
+            _draw_plane_z(z_top,   ROOT.kGray + 2, 1)    # plate top face
+            _draw_plane_z(z_bot,   ROOT.kGray + 2, 1)    # plate bottom face
+
+            # Perforated plate: tile the hole array across the visible window when the
+            # plate slab is in z-view.  Cap the count per axis as a safety net so a
+            # far zoom-out cannot spawn thousands of cylinders.
+            _plate_in_view = (self._trk_pan_z - _hr <= z_top and
+                              z_bot <= self._trk_pan_z + _hr)
+            if pitch > 0 and _plate_in_view:
+                _cap = 15
+                i_lo = int(np.floor((self._trk_pan_x - _hr - r_cm) / pitch))
+                i_hi = int(np.ceil((self._trk_pan_x + _hr + r_cm) / pitch))
+                j_lo = int(np.floor((self._trk_pan_y - _hr - r_cm) / pitch))
+                j_hi = int(np.ceil((self._trk_pan_y + _hr + r_cm) / pitch))
+                i_hi = min(i_hi, i_lo + _cap)
+                j_hi = min(j_hi, j_lo + _cap)
+                for i in range(i_lo, i_hi + 1):
+                    for j in range(j_lo, j_hi + 1):
+                        _draw_cylinder(i * pitch, j * pitch, z_bot, z_top,
+                                       ROOT.kOrange + 7, 0.55)
 
             # ── Primary electron drift (blue) ─────────────────────────────────
             px = np.asarray(data["primary_x"][ev])
@@ -2366,13 +2383,13 @@ class ResultsPanel(QTabWidget):
                         dot.Draw("SAME")
                         self._tracks_objects.append(dot)
                     continue
-                y_end = float(ys[-1])
-                if abs(y_end - (-gap)) <= tol:
-                    col = ROOT.kGreen + 2    # → readout cathode
-                elif abs(y_end - gap) <= tol:
-                    col = ROOT.kMagenta      # → non-readout cathode
+                z_end = float(zs[-1])
+                if z_drift is not None and abs(z_end - z_drift) <= tol:
+                    col = ROOT.kGreen + 2    # → drift cathode (ions drift up)
+                elif z_anode is not None and abs(z_end - z_anode) <= tol:
+                    col = ROOT.kMagenta      # → anode pad
                 else:
-                    col = ROOT.kGray + 1     # absorbed / out of window
+                    col = ROOT.kGray + 1     # absorbed on plate / out of window
                 for _seg in _clip(xs, ys, zs):
                     _pl3(*_seg, col, 1, alpha=0.55)
 
@@ -2395,14 +2412,17 @@ class ResultsPanel(QTabWidget):
             _leg_proxies = [
                 (_mk_line(ROOT.kBlue + 1, 2),  "Primary e^{-}",          "L"),
                 (_mk_marker(ROOT.kOrange + 1), "Avalanche",               "P"),
-                (_mk_line(ROOT.kGreen + 2),    "Ion #rightarrow readout", "L"),
-                (_mk_line(ROOT.kMagenta),      "Ion #rightarrow other",   "L"),
+                (_mk_line(ROOT.kGreen + 2),    "Ion #rightarrow drift",   "L"),
+                (_mk_line(ROOT.kMagenta),      "Ion #rightarrow anode",   "L"),
                 (_mk_line(ROOT.kGray + 1),     "Ion (absorbed)",          "L"),
+                (_mk_line(ROOT.kOrange + 7),   "THGEM holes",             "L"),
+                (_mk_line(ROOT.kCyan - 7, 2),  "Drift plane",             "L"),
+                (_mk_line(ROOT.kRed - 7, 2),   "Anode plane",             "L"),
             ]
-            leg = ROOT.TLegend(0.70, 0.76, 0.99, 0.97)
+            leg = ROOT.TLegend(0.70, 0.60, 0.99, 0.97)
             leg.SetBorderSize(0)
             leg.SetFillColorAlpha(ROOT.kWhite, 0.75)
-            leg.SetTextSize(0.028)
+            leg.SetTextSize(0.024)
             for _proxy, _label, _opt in _leg_proxies:
                 leg.AddEntry(_proxy, _label, _opt)
             leg.Draw()
@@ -2422,11 +2442,12 @@ class ResultsPanel(QTabWidget):
     def _trk_pan(self, axis: str, direction: int) -> None:
         """Shift the visible centre by 30 % of the current visible half-range."""
         geom    = self._track_geom or {}
-        pitch   = geom.get("wire_pitch_cm", 0.18)
-        n_wires = int(geom.get("n_wires", 10))
-        gap     = geom.get("gap_cm", 0.14)
-        x_half  = (n_wires - 1) / 2.0 * pitch + pitch
-        max_half = max(x_half, gap * 1.2, 0.5)   # matches equal-range TH3F
+        pitch   = geom.get("pitch_cm", 0.08)
+        z_drift = geom.get("z_drift_cm")
+        z_anode = geom.get("z_anode_cm")
+        gap     = max(abs(z_anode) if z_anode is not None else 0.25,
+                      abs(z_drift) if z_drift is not None else 0.35)
+        max_half = max(1.5 * pitch, gap)         # matches the TH3F frame in _update_track_plot
         step = max_half * self._trk_zoom_scale * 0.3 * direction
         if   axis == "x": self._trk_pan_x += step
         elif axis == "y": self._trk_pan_y += step
