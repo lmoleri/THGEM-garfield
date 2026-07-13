@@ -11,7 +11,7 @@
     "target_element_size_um": 200.0,
     "min_elements": 2,
     "max_elements": 3,
-    "periodic_copies": 3,
+    "periodic_copies": 7,
     "hole_sectors": 3,
     "grid_nx": 25,
     "grid_nz": 101
@@ -43,16 +43,19 @@
     "n_field_points": 10,
     "e_field_min_vcm": 100.0,
     "e_field_max_vcm": 400000.0,
-    "w_value_eV": 26.0
+    "w_value_eV": 26.0,
+    "transport_max_energy_eV": 200.0
   },
   "simulation": {
     "n_events": 3,
-    "max_avalanche_size": 100000,
-    "time_window_ns": 100.0,
+    "max_avalanche_size": 500,
+    "time_window_ns": 200.0,
     "time_step_ns": 0.5,
     "enable_ion_drift": true,
-    "store_drift_lines": true,
+    "store_drift_lines": false,
     "ion_max_step_um": 5.0,
+    "ion_time_window_ns": 1000000.0,
+    "max_ions_drifted": 200,
     "random_seed": 12345
   }
 }

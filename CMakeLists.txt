@@ -80,6 +80,10 @@ if(BUILD_TESTING)
       --out ${CMAKE_BINARY_DIR}/smoke-output
   )
   set_tests_properties(smoke_thgem_sim PROPERTIES
+    # Run from the project root so the committed gas/ table and cached field_cache/
+    # are found and reused (matching how the GUI launches the binary); otherwise the
+    # test regenerates the multi-hour Magboltz gas file under the build directory.
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     ENVIRONMENT
       "GARFIELD_INSTALL=${THGEM_SHARED_GARFIELD_HINT};HEED_DATABASE=${THGEM_SHARED_GARFIELD_HINT}/share/Heed/database"
     TIMEOUT 600

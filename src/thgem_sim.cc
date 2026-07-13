@@ -59,12 +59,12 @@
 #include <string_view>
 #include <vector>
 
+#include "Garfield/AvalancheMC.hh"
 #include "Garfield/AvalancheMicroscopic.hh"
 #include "Garfield/Component.hh"
 #include "Garfield/ComponentGrid.hh"
 #include "Garfield/ComponentNeBem3d.hh"
 #include "Garfield/ComponentUser.hh"
-#include "Garfield/DriftLineRKF.hh"
 #include "Garfield/FundamentalConstants.hh"
 #include "Garfield/GarfieldConstants.hh"
 #include "Garfield/GeometrySimple.hh"
@@ -83,11 +83,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+using Garfield::AvalancheMC;
 using Garfield::AvalancheMicroscopic;
 using Garfield::ComponentGrid;
 using Garfield::ComponentNeBem3d;
 using Garfield::ComponentUser;
-using Garfield::DriftLineRKF;
 using Garfield::GeometrySimple;
 using Garfield::MediumConductor;
 using Garfield::MediumMagboltz;
@@ -114,7 +114,9 @@ struct GeometryConfig {
   double targetElementSizeUm = 100.0; // target boundary-element size [µm]
   int    minElements         = 3;     // min elements along a primitive edge
   int    maxElements         = 5;     // max elements along a primitive edge
-  int    periodicCopies      = 5;     // neBEM periodic copies (uses 2n+1)
+  int    periodicCopies      = 7;     // neBEM periodic copies; >=7 needed so the
+                                       // tiled cathode/anode patches approximate an
+                                       // infinite plane (fewer -> reversed drift field)
   int    holeSectors         = 4;     // circle approximation (2=square, 3=octagon, …)
   // Transport field is sampled from neBEM onto this grid (fast interpolation
   // during the avalanche).  The grid spans ~1.4 cells in x/y and drift→anode in z.
@@ -147,11 +149,19 @@ struct GasConfig {
   double temperatureK        = 293.15;
   double pressureTorr        = 760.0;
   bool   enablePenning       = true;
-  int    nCollisions         = 10;
-  double maxElectronEnergyEV = 200.0;
-  int    nFieldPoints        = 20;
+  int    nCollisions         = 2;
+  double maxElectronEnergyEV = 2000.0;  // EFINAL of the Magboltz table (keys the .gas file name)
+  // Ceiling of the microscopic collision-rate table.  AvalancheMicroscopic samples
+  // every transport step against the *maximum* collision rate over the whole energy
+  // grid (MediumMagboltz::m_cfNull), rejecting the rest as null collisions.  A ceiling
+  // far above the energies the electrons actually reach therefore costs a proportional
+  // number of wasted steps.  A THGEM's peak field (~20 kV/cm) keeps electrons at a few
+  // eV, so this is set well below the TGC-inherited 2 keV table EFINAL.  Applied after
+  // LoadGasFile, which rebuilds the rate table without touching the transport tables.
+  double transportMaxEnergyEV = 200.0;
+  int    nFieldPoints        = 10;
   double eFieldMinVcm        = 100.0;
-  double eFieldMaxVcm        = 100000.0;
+  double eFieldMaxVcm        = 400000.0;
   double wValueEV            = 26.0;
 };
 
@@ -160,9 +170,21 @@ struct SimulationConfig {
   std::size_t maxAvalancheSize = 200000;
   double      timeWindowNs     = 200.0;
   double      timeStepNs       = 0.5;
-  bool        enableIonDrift   = true;
+  bool        enableIonDrift   = false;
   bool        storeDriftLines  = false;
   double      ionMaxStepUm     = 5.0;
+  // Wall-clock safety bound for ion drift (AvalancheMC).  Ions are ~1000x slower
+  // than electrons; distance-stepping bounds a normal ion by geometry, and this
+  // time window is the backstop that terminates an ion trapped at a field
+  // stagnation point.  1 ms comfortably exceeds a full drift-gap ion transit
+  // (~0.6 ms) while capping a stuck/oscillating ion at ~a thousand steps.
+  double      ionTimeWindowNs  = 1.0e6;
+  // Cap on the number of avalanche ions actually back-drifted per event (0 =
+  // no cap).  Ions drift up, away from the anode, where its weighting field is
+  // zero, so they contribute ~nothing to the anode signal — but transporting all
+  // of them dominates the runtime at high gain.  A modest cap keeps gain runs
+  // fast; raise it (or set 0) for ion-backflow studies.
+  std::size_t maxIonsDrifted   = 200;
   int         randomSeed       = 0;
 };
 
@@ -463,6 +485,8 @@ Config LoadConfig(const fs::path& path) {
     cfg.gas.enablePenning = ReadBool  (*g, "gas", "enable_penning",       cfg.gas.enablePenning);
     cfg.gas.nCollisions         = ReadInt   (*g, "gas", "n_magboltz_collisions",  cfg.gas.nCollisions);
     cfg.gas.maxElectronEnergyEV = ReadDouble(*g, "gas", "max_electron_energy_eV", cfg.gas.maxElectronEnergyEV);
+    cfg.gas.transportMaxEnergyEV = ReadDouble(*g, "gas", "transport_max_energy_eV",
+                                              cfg.gas.transportMaxEnergyEV);
     cfg.gas.nFieldPoints        = ReadInt   (*g, "gas", "n_field_points",         cfg.gas.nFieldPoints);
     cfg.gas.eFieldMinVcm        = ReadDouble(*g, "gas", "e_field_min_vcm",        cfg.gas.eFieldMinVcm);
     cfg.gas.eFieldMaxVcm        = ReadDouble(*g, "gas", "e_field_max_vcm",        cfg.gas.eFieldMaxVcm);
@@ -477,6 +501,8 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.enableIonDrift   = ReadBool  (*s, "simulation", "enable_ion_drift",   cfg.simulation.enableIonDrift);
     cfg.simulation.storeDriftLines  = ReadBool  (*s, "simulation", "store_drift_lines",  cfg.simulation.storeDriftLines);
     cfg.simulation.ionMaxStepUm     = ReadDouble(*s, "simulation", "ion_max_step_um",    cfg.simulation.ionMaxStepUm);
+    cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
+    cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
     cfg.simulation.randomSeed       = ReadInt   (*s, "simulation", "random_seed",        cfg.simulation.randomSeed);
   }
 
@@ -512,6 +538,8 @@ Config LoadConfig(const fs::path& path) {
     throw std::runtime_error("gas.gas1_fraction_pct must be in (0, 100)");
   if (cfg.gas.temperatureK     <= 0.)  throw std::runtime_error("gas.temperature_K must be positive");
   if (cfg.gas.pressureTorr     <= 0.)  throw std::runtime_error("gas.pressure_Torr must be positive");
+  if (cfg.gas.transportMaxEnergyEV <= 0.)
+    throw std::runtime_error("gas.transport_max_energy_eV must be positive");
   if (cfg.simulation.nEvents   == 0)   throw std::runtime_error("simulation.n_events must be at least 1");
   if (cfg.simulation.timeWindowNs <= 0.) throw std::runtime_error("simulation.time_window_ns must be positive");
   if (cfg.simulation.timeStepNs   <= 0.) throw std::runtime_error("simulation.time_step_ns must be positive");
@@ -591,23 +619,35 @@ std::string SetupGas(MediumMagboltz& gas, const GasConfig& cfg,
   gas.SetTemperature(cfg.temperatureK);
   gas.SetPressure(cfg.pressureTorr);
 
-  const std::string gasFile = DeriveGasFileName(cfg);
+  // Gas tables and their _props.csv sidecars live in gas/ (keeps the project root tidy).
+  EnsureDirectory("gas");
+  const std::string gasFile = (fs::path("gas") / DeriveGasFileName(cfg)).string();
 
   if (fs::exists(gasFile)) {
     std::cout << "  Loading gas table from: " << gasFile << "\n";
     gas.LoadGasFile(gasFile);
-    gas.SetMaxElectronEnergy(cfg.maxElectronEnergyEV);
   } else {
     std::cout << "  Gas file not found: " << gasFile << "\n"
               << "  Running Magboltz for " << cfg.nFieldPoints
               << " field points from " << static_cast<int>(cfg.eFieldMinVcm)
               << " to " << static_cast<int>(cfg.eFieldMaxVcm) << " V/cm ...\n";
-    gas.SetMaxElectronEnergy(cfg.maxElectronEnergyEV);
+    gas.SetMaxElectronEnergy(cfg.maxElectronEnergyEV);   // EFINAL of the generated table
     gas.SetFieldGrid(cfg.eFieldMinVcm, cfg.eFieldMaxVcm, cfg.nFieldPoints, /*logspacing=*/true);
     gas.GenerateGasTable(cfg.nCollisions, /*verbose=*/false);
     gas.WriteGasFile(gasFile);
     std::cout << "  Gas table saved to: " << gasFile << "\n";
   }
+
+  // Cap the microscopic collision-rate table well below the transport-table EFINAL.
+  // AvalancheMicroscopic draws every step from the *maximum* rate over the whole energy
+  // grid and rejects the surplus as null collisions, so an oversized ceiling costs a
+  // proportional number of wasted steps.  Re-run after LoadGasFile: SetMaxElectronEnergy
+  // only forces the rate table to be rebuilt; the loaded transport tables are untouched.
+  // If an electron ever exceeds the ceiling Garfield raises it automatically.
+  gas.SetMaxElectronEnergy(cfg.transportMaxEnergyEV);
+  std::cout << "  Collision-rate ceiling: " << cfg.transportMaxEnergyEV
+            << " eV (table EFINAL " << cfg.maxElectronEnergyEV << " eV)"
+            << ", null-collision rate = " << gas.GetElectronNullCollisionRate(0) << " /ns\n";
 
   if (cfg.enablePenning) {
     if (!gas.EnablePenningTransfer())
@@ -856,33 +896,53 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
 void SampleFieldToFile(ComponentNeBem3d& cmp, const ThgemDetector& det,
                        const ThgemGeom& g, const GeometryConfig& gc,
                        const double gxy, const std::string& file) {
-  std::ofstream out(file);
-  if (!out) throw std::runtime_error("Cannot write field cache: " + file);
-  out << std::setprecision(8);
-  const int NX = gc.gridNx, NZ = gc.gridNz;
-  const double dxy = 2. * gxy / std::max(NX - 1, 1);
-  const double dz  = (g.zDrift - g.zAnode) / std::max(NZ - 1, 1);
-  const std::size_t total = static_cast<std::size_t>(NX) * NX * NZ;
-  std::size_t done = 0, nextPct = 20;
-  for (int i = 0; i < NX; ++i) {
-    const double x = -gxy + i * dxy;
-    for (int j = 0; j < NX; ++j) {
-      const double y = -gxy + j * dxy;
-      for (int k = 0; k < NZ; ++k) {
-        const double z = g.zAnode + k * dz;
-        double ex = 0, ey = 0, ez = 0, v = 0; int status = 0;
-        Garfield::Medium* m = nullptr;
-        cmp.ElectricField(x, y, z, ex, ey, ez, v, m, status);
-        const int flag = det.InGas(x, y, z) ? 1 : 0;
-        out << x << ' ' << y << ' ' << z << ' '
-            << ex << ' ' << ey << ' ' << ez << ' ' << v << ' ' << flag << '\n';
-        if (++done * 100 >= nextPct * total) {
-          std::cout << "    sampling " << nextPct << "%\n";
-          nextPct += 20;
+  // Write atomically via a temp file + rename: an interrupted or crashing sample
+  // must never leave a truncated file that looks like a valid cache on the next run.
+  const std::string tmp = file + ".part";
+  {
+    std::ofstream out(tmp);
+    if (!out) throw std::runtime_error("Cannot write field cache: " + tmp);
+    out << std::setprecision(8);
+    const int NX = gc.gridNx, NZ = gc.gridNz;
+    const double dxy = 2. * gxy / std::max(NX - 1, 1);
+    const double dz  = (g.zDrift - g.zAnode) / std::max(NZ - 1, 1);
+    const std::size_t total = static_cast<std::size_t>(NX) * NX * NZ;
+    std::size_t done = 0, nextPct = 20;
+    for (int i = 0; i < NX; ++i) {
+      const double x = -gxy + i * dxy;
+      for (int j = 0; j < NX; ++j) {
+        const double y = -gxy + j * dxy;
+        for (int k = 0; k < NZ; ++k) {
+          const double z = g.zAnode + k * dz;
+          double ex = 0, ey = 0, ez = 0, v = 0; int status = 0;
+          Garfield::Medium* m = nullptr;
+          cmp.ElectricField(x, y, z, ex, ey, ez, v, m, status);
+          const int flag = det.InGas(x, y, z) ? 1 : 0;
+          out << x << ' ' << y << ' ' << z << ' '
+              << ex << ' ' << ey << ' ' << ez << ' ' << v << ' ' << flag << '\n';
+          if (++done * 100 >= nextPct * total) {
+            std::cout << "    sampling " << nextPct << "%\n";
+            nextPct += 20;
+          }
         }
       }
     }
-  }
+    out.flush();
+    if (!out) throw std::runtime_error("Write error while sampling field cache: " + tmp);
+  }  // close the stream before renaming
+  fs::rename(tmp, file);
+}
+
+// Count the lines in a file.  Used to detect a truncated field cache: a short
+// file is not rejected by ComponentGrid::LoadElectricField (it silently leaves the
+// missing nodes at zero, which would run the avalanche in a bogus ~zero field), so
+// the node count must be validated against the grid before the cache is trusted.
+std::size_t CountFileLines(const std::string& file) {
+  std::ifstream in(file);
+  std::size_t n = 0;
+  std::string line;
+  while (std::getline(in, line)) ++n;
+  return n;
 }
 
 // Cache filename for the sampled transport field, keyed by the geometry, fields
@@ -1063,14 +1123,25 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   AvalancheMicroscopic aval(&sensor);
   if (sim.maxAvalancheSize > 0) aval.EnableAvalancheSizeLimit(sim.maxAvalancheSize);
   if (sim.storeDriftLines) aval.EnableDriftLines(true);
+  // Bound the *transport* in time.  Sensor::SetTimeWindow only bins the induced signal;
+  // without this an electron that drifts slowly (or stalls) is tracked indefinitely.
+  // Charges still in flight at the end of the window end as StatusOutsideTimeWindow.
+  aval.SetTimeWindow(0., sim.timeWindowNs);
 
-  std::optional<DriftLineRKF> ionDrift;
+  // Ion drift uses AvalancheMC (Monte-Carlo drift) rather than DriftLineRKF: the
+  // RKF integrator has no step-count or time bound, so a single ion near a field
+  // stagnation point loops indefinitely (hang) with unbounded path storage (OOM).
+  // AvalancheMC steps by a fixed distance (bounds a normal ion by geometry) and
+  // honours a time window (SetTimeWindow), the backstop that terminates a trapped
+  // ion — the same mechanism that bounds the electron avalanche above.
+  std::optional<AvalancheMC> ionDrift;
   if (sim.enableIonDrift) {
     ionDrift.emplace(&sensor);
-    if (sim.ionMaxStepUm > 0.) {
-      ionDrift->SetMaximumStepSize(sim.ionMaxStepUm * 1.e-4);
-      std::cout << "  Ion drift-line step capped at " << sim.ionMaxStepUm << " um.\n";
-    }
+    ionDrift->EnableDriftLines(true);   // populate EndPoint::path for the 3D view
+    if (sim.ionMaxStepUm > 0.) ionDrift->SetDistanceSteps(sim.ionMaxStepUm * 1.e-4);
+    ionDrift->SetTimeWindow(0., sim.ionTimeWindowNs);
+    std::cout << "  Ion drift: AvalancheMC, " << sim.ionMaxStepUm
+              << " um steps, " << sim.ionTimeWindowNs << " ns time window.\n";
   }
 
   std::vector<double> anodeCharges, cathodeCharges, cathodeTopCharges, chargeRatios;
@@ -1085,6 +1156,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       ? FormatNumber(*distOptMm) + " mm" : "random";
 
   // ── Event loop ───────────────────────────────────────────────────────────────
+  auto tEvent = std::chrono::steady_clock::now();
   for (std::size_t ev = 0; ev < sim.nEvents; ++ev) {
     sensor.ClearSignal();
 
@@ -1150,20 +1222,26 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       }
     }
 
-    // Drift every positive ion from where it was created; DriftLineRKF adds the
-    // Ramo-induced current to the sensor and (for the first kMaxDispIonPaths)
-    // the drift-line path is extracted for 3D display.
+    // Back-drift the avalanche ions from where they were created; AvalancheMC
+    // adds the Ramo-induced current to the sensor and (for the first
+    // kMaxDispIonPaths) the drift-line path is extracted for 3D display.  Only the
+    // first sim.maxIonsDrifted are transported (0 = all): ions drift away from the
+    // anode and induce ~nothing on it, so this bounds the high-gain runtime without
+    // changing the anode signal.  DriftIon clears its ion container each call, so
+    // GetIons() holds exactly the ion just drifted (with its full trajectory).
     ionX.clear(); ionY.clear(); ionZ.clear(); ionNpts.clear();
     if (sim.enableIonDrift) {
-      for (std::size_t i = 0; i < nEp; ++i) {
+      const std::size_t nIons = (sim.maxIonsDrifted > 0)
+          ? std::min(nEp, sim.maxIonsDrifted) : nEp;
+      for (std::size_t i = 0; i < nIons; ++i) {
         double xi0, yi0, zi0, ti0, ei0, xi1, yi1, zi1, ti1, ei1; int st;
         aval.GetElectronEndpoint(i, xi0, yi0, zi0, ti0, ei0,
                                     xi1, yi1, zi1, ti1, ei1, st);
         const bool ok = ionDrift->DriftIon(xi0, yi0, zi0, ti0);
-        double xe = xi0, ye = yi0, ze = zi0, te = ti0;
-        int driftStatus = Garfield::StatusCalculationAbandoned;
-        ionDrift->GetEndPoint(xe, ye, ze, te, driftStatus);
-        if (!ok) {
+        const auto& ions = ionDrift->GetIons();
+        if (!ok || ions.empty()) {
+          const int driftStatus =
+              ions.empty() ? Garfield::StatusCalculationAbandoned : ions.front().status;
           std::ostringstream msg;
           msg << "Ion drift failed for event " << ev << ", height " << distLabel
               << ", ion " << i << "/" << nEp
@@ -1175,14 +1253,12 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
           throw std::runtime_error(msg.str());
         }
         if (i < kMaxDispIonPaths) {
-          const std::size_t nPts = ionDrift->GetNumberOfDriftLinePoints();
-          ionNpts.push_back(static_cast<int>(nPts));
-          for (std::size_t ip = 0; ip < nPts; ++ip) {
-            double ix, iy, iz, it;
-            ionDrift->GetDriftLinePoint(ip, ix, iy, iz, it);
-            ionX.push_back(static_cast<float>(ix));
-            ionY.push_back(static_cast<float>(iy));
-            ionZ.push_back(static_cast<float>(iz));
+          const auto& path = ions.front().path;
+          ionNpts.push_back(static_cast<int>(path.size()));
+          for (const auto& pt : path) {
+            ionX.push_back(static_cast<float>(pt.x));
+            ionY.push_back(static_cast<float>(pt.y));
+            ionZ.push_back(static_cast<float>(pt.z));
           }
         }
       }
@@ -1241,6 +1317,13 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       const double ratio = qCathode / qAnode;
       hRatio.Fill(ratio);
       chargeRatios.push_back(ratio);
+    }
+
+    if (ev == 0) {
+      const double dt =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - tEvent).count();
+      std::cout << "  [timing] first event: " << FormatNumber(dt, 2) << " s"
+                << " (" << ne << " e⁻ tracked)\n";
     }
 
     if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents) {
@@ -1440,6 +1523,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"enable_penning",         cfg.gas.enablePenning},
       {"n_magboltz_collisions",  cfg.gas.nCollisions},
       {"max_electron_energy_eV", cfg.gas.maxElectronEnergyEV},
+      {"transport_max_energy_eV", cfg.gas.transportMaxEnergyEV},
       {"n_field_points",         cfg.gas.nFieldPoints},
       {"e_field_min_vcm",        cfg.gas.eFieldMinVcm},
       {"e_field_max_vcm",        cfg.gas.eFieldMaxVcm},
@@ -1453,6 +1537,8 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"enable_ion_drift",   cfg.simulation.enableIonDrift},
       {"store_drift_lines",  cfg.simulation.storeDriftLines},
       {"ion_max_step_um",    cfg.simulation.ionMaxStepUm},
+      {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
+      {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
       {"random_seed",        cfg.simulation.randomSeed}
     }}
   };
@@ -1554,11 +1640,29 @@ int main(int argc, char* argv[]) {
     grid.EnableMirrorPeriodicityX();
     grid.EnableMirrorPeriodicityY();
 
-    const std::string fieldCache = DeriveFieldCacheName(cfg.geometry, cfg.fields);
+    // Sampled neBEM field caches live in field_cache/ (generated; gitignored).
+    EnsureDirectory("field_cache");
+    const std::string fieldCache =
+        (fs::path("field_cache") / DeriveFieldCacheName(cfg.geometry, cfg.fields)).string();
+    const std::size_t expectNodes = static_cast<std::size_t>(cfg.geometry.gridNx) *
+                                    cfg.geometry.gridNx * cfg.geometry.gridNz;
     auto tField = Clock::now();
+    bool haveField = false;
     if (fs::exists(fieldCache)) {
       std::cout << "\nLoading cached transport field from: " << fieldCache << "\n";
-    } else {
+      const std::size_t nLines = CountFileLines(fieldCache);
+      if (nLines == expectNodes &&
+          grid.LoadElectricField(fieldCache, "xyz",
+                                 /*withPotential=*/true, /*withFlag=*/true)) {
+        haveField = true;
+      } else {
+        std::cout << "  Cached field is incomplete or unreadable (" << nLines << "/"
+                  << expectNodes << " nodes) — deleting and regenerating.\n";
+        std::error_code ec;
+        fs::remove(fieldCache, ec);
+      }
+    }
+    if (!haveField) {
       std::cout << "\nSolving THGEM field with neBEM and sampling the "
                 << cfg.geometry.gridNx << "×" << cfg.geometry.gridNx << "×"
                 << cfg.geometry.gridNz << " transport grid"
@@ -1569,9 +1673,11 @@ int main(int argc, char* argv[]) {
       std::cout << "  neBEM solved (" << detector.Component().GetNumberOfElements()
                 << " boundary elements). Sampling transport grid (be patient)...\n";
       SampleFieldToFile(detector.Component(), detector, g, cfg.geometry, gxy, fieldCache);
+      if (!grid.LoadElectricField(fieldCache, "xyz",
+                                  /*withPotential=*/true, /*withFlag=*/true))
+        throw std::runtime_error("Failed to load freshly sampled transport field: "
+                                 + fieldCache);
     }
-    if (!grid.LoadElectricField(fieldCache, "xyz", /*withPotential=*/true, /*withFlag=*/true))
-      throw std::runtime_error("Failed to load transport field: " + fieldCache);
     grid.SetMedium(&gas);   // must follow SetMesh(): SetMesh() calls Reset().
     std::cout << "  [timing] transport field: "
               << FormatNumber(secsSince(tField), 1) << " s\n";

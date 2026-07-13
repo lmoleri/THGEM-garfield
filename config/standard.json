@@ -1,11 +1,11 @@
 {
   "geometry": {
     "hole_diameter_um": 500.0,
-    "hole_pitch_um": 1000.0,
+    "hole_pitch_um": 800.0,
     "plate_thickness_um": 400.0,
     "copper_thickness_um": 35.0,
     "rim_um": 0.0,
-    "drift_gap_mm": 5.0,
+    "drift_gap_mm": 3.0,
     "induction_gap_mm": 2.0,
     "dielectric_material": "fr4",
     "target_element_size_um": 100.0,
@@ -13,13 +13,13 @@
     "max_elements": 5,
     "periodic_copies": 9,
     "hole_sectors": 4,
-    "grid_nx": 31,
-    "grid_nz": 131
+    "grid_nx": 41,
+    "grid_nz": 161
   },
   "fields": {
     "e_drift_kvcm": 0.5,
-    "delta_v_thgem_V": 1400.0,
-    "e_induction_kvcm": 1.0
+    "delta_v_thgem_V": 800.0,
+    "e_induction_kvcm": 3.0
   },
   "source": {
     "energy_keV": 5.9,
@@ -33,7 +33,7 @@
     "gas1_fraction_pct": 70.0,
     "gas2": "co2",
     "ion_species": "co2",
-    "temperature_K": 293.0,
+    "temperature_K": 293.15,
     "pressure_Torr": 760.0,
     "enable_penning": true,
     "n_magboltz_collisions": 2,
@@ -46,14 +46,13 @@
   },
   "simulation": {
     "n_events": 1,
-    "max_avalanche_size": 20000,
+    "max_avalanche_size": 500000,
     "time_window_ns": 300.0,
     "time_step_ns": 0.5,
     "enable_ion_drift": false,
     "store_drift_lines": true,
     "ion_max_step_um": 5.0,
     "ion_time_window_ns": 1000000.0,
-    "max_ions_drifted": 200,
     "random_seed": 0
   }
 }

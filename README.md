@@ -10,8 +10,9 @@ schema. It is a port of the sibling [tgc-garfield](https://github.com/lmoleri/tg
 Gap Chamber) project: the gas, avalanche, signal, track and I/O machinery is shared, while the
 field engine was rebuilt — a wire chamber has an analytic field, a hole multiplier does not.
 
-> **Status:** the field solver and the GUI work and are verified. A **multiplying avalanche run
-> currently hangs** — see [Known issues](#known-issues) before using this for physics.
+> **Status:** working and verified end-to-end — field solve, multiplying avalanche (realistic
+> gain), bounded ion drift, and the GUI. A ΔV≈1400 V run on the hole axis multiplies to ⟨~10³⟩
+> electrons and induces a non-zero anode charge in a few seconds.
 
 ---
 
@@ -46,7 +47,12 @@ here. Instead:
 
 1. **`ComponentNeBem3d`** — Garfield's native boundary-element solver — solves a *single unit cell*
    (`SolidBox` drift cathode + anode, `SolidHole` top-Cu / dielectric / bottom-Cu inside a
-   `GeometrySimple`), tiled with mirror periodicity in x and y.
+   `GeometrySimple`), tiled with mirror periodicity in x and y. The drift cathode and anode are
+   one-cell patches that only *approximate* an infinite plane once tiled, so **`periodic_copies`
+   must be large enough** (≥7 for the standard geometry, ≥9 for the larger default) — with too few
+   copies the truncated periodic sum leaves the on-axis drift field *reversed* mid-gap, which traps
+   drifting charges. `neBEM`'s `AddPlaneZ` is **not** a substitute: it does not enforce a plane
+   boundary condition under a periodic solve.
 2. Direct neBEM lookups are far too slow to drive an avalanche, so the solved field is **sampled
    once onto a `ComponentGrid`** (fast trilinear interpolation) and **cached to disk, keyed by the
    geometry and field settings** (`thgem_field_*.txt`). Re-running an unchanged geometry reloads the
@@ -69,13 +75,17 @@ centre plus an on-axis profile, which is what the GUI's **E-Field** tab renders.
 ├── config/
 │   ├── default_thgem.json  baseline configuration
 │   └── smoke_thgem.json    fast, coarse-mesh smoke test (used by CTest)
+├── gas/                    Magboltz gas tables (*.gas) + *_props.csv sidecars
+├── field_cache/            sampled neBEM field caches (generated, gitignored)
 ├── third_party/nlohmann/   vendored single-header JSON library
 └── CMakeLists.txt
 ```
 
-`*.gas` is a cached Magboltz transport table; one is committed so a fresh clone can run the default
-configuration without an hours-long regeneration. Build output, `results/`, `neBEMOut/` and the
-sampled-field cache are generated and gitignored.
+`gas/*.gas` is a cached Magboltz transport table (a function of the gas + field grid only, not the
+detector geometry); one is committed so a fresh clone can run the default configuration without an
+hours-long regeneration. The `_props.csv` sidecar, `field_cache/`, build output, `results/` and
+`neBEMOut/` are generated and gitignored. These data folders live next to wherever the binary is
+run from — the GUI runs it from the project root, so they appear here.
 
 ## Build
 
@@ -114,31 +124,29 @@ Summary / Plots / Waveforms / Integrals / 3D-Tracks / E-Field / Magboltz tabs.
 | `fields` | `e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm` |
 | `source` | `energy_keV`, `source_distances_mm` (height above the top copper; `null` = random over the drift gap), `x_positions_cm` (`null` = random over the cell; a fixed `x` pins `y = 0`, so `x = 0` is the hole axis) |
 | `gas` | Magboltz mixture, temperature, pressure, Penning, field grid |
-| `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift`, `store_drift_lines`, `ion_max_step_um`, `random_seed` |
+| `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift` (default off), `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
 
 Only the anode is read out. For compatibility with the shared TGC ROOT schema the `cathode`,
 `cathode_top` and amplifier branches still exist but are written as zeros.
 
-## Known issues
+## Transport bounds (why runs terminate)
 
-**Single-electron transport through the hole hangs.** A run that actually sends an electron into
-the hole does not terminate in reasonable time.
+Two independent safeguards keep a run from hanging or exhausting memory, because a charge can stall
+at a field feature and neither drifter is otherwise bounded from outside:
 
-- Reproducible with `max_avalanche_size: 1` (multiplication fully disabled), `x_positions_cm: [0.0]`
-  (hole axis), `delta_v_thgem_V: 700`, and even a 30 ns `time_window_ns`: a single electron runs for
-  minutes.
-- It is therefore **not** the avalanche multiplication, and **not** the avalanche size limit.
-- It is **not** a numerical field spike: the sampled grid's maximum is 22.7 kV/cm (physical, at the
-  hole rim), with no outliers.
-- Runs where the electron misses the hole and is absorbed on the top copper complete normally, which
-  is why low/no-gain configurations finish.
+- **Electron avalanche** — `AvalancheMicroscopic::SetTimeWindow(0, time_window_ns)` bounds transport
+  in time. (`Sensor::SetTimeWindow` only bins the induced signal; it does not stop transport.) A
+  charge still in flight at the window's end terminates as `StatusOutsideTimeWindow`.
+- **Ion drift** — uses **`AvalancheMC`** (Monte-Carlo, distance-stepped), *not* `DriftLineRKF`. The
+  RKF integrator has no step-count or time bound, so a single ion looping near a field stagnation
+  point runs forever with unbounded path storage (the earlier hang/OOM). `AvalancheMC` steps by a
+  fixed distance (bounding a normal ion by geometry) and honours `ion_time_window_ns` (default 1 ms)
+  as the backstop for a trapped ion. Ion drift is **off by default**: ions induce ~nothing on the
+  anode, so the signal is unchanged, and they are ~1000× slower than electrons — enable it for the
+  3D ion-path view or ion-backflow studies.
 
-Everything else is verified working: the neBEM solve (potential 0 V at the anode → −1745 V at the
-drift cathode, field funnelling into the hole), the geometry-keyed field cache, and the GUI
-(construction, config round-trip, derived-voltage readout, and every result-tab loader against real
-output).
-
-Suggested next debugging step: instrument the transport to dump one electron's energy, position and
-status per step, then A/B the *same* electron on the neBEM-direct field versus the `ComponentGrid`,
-and with mirror periodicity enabled and disabled, to isolate whether the interpolated periodic field
-is the cause.
+Verified end-to-end: the neBEM solve (0 V at the anode → negative at the drift cathode, field
+funnelling into the hole) with no reversed drift-gap pocket at the shipped `periodic_copies`; the
+geometry-keyed field cache; a realistic multiplying avalanche (⟨gain⟩ ~10³ at ΔV≈1400 V) that
+completes in seconds with bounded memory; the CTest smoke run; and the GUI (construction, config
+round-trip, derived-voltage readout, and every result-tab loader against real output).

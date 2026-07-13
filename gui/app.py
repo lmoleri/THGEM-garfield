@@ -72,6 +72,7 @@ SCRIPT_DIR       = Path(__file__).parent.resolve()              # …/projects/T
 THGEM_DIR          = (SCRIPT_DIR / "..").resolve()                # …/projects/THGEM/
 BINARY           = THGEM_DIR / "build" / "thgem_sim"
 GARFIELD_INSTALL = (THGEM_DIR / "../../local/garfield").resolve() # …/local/garfield/
+GAS_DIR          = THGEM_DIR / "gas"                             # gas tables + _props.csv sidecars
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +88,10 @@ def derive_gas_filename(gas: dict) -> str:
     T   = round(gas.get("temperature_K", 293.15))
     P   = round(gas.get("pressure_Torr", 760.0))
     Ee  = round(gas.get("max_electron_energy_eV", 2000.0))
-    Ef    = round(gas.get("e_field_max_vcm", 300000.0) / 1000)
+    Ef    = round(gas.get("e_field_max_vcm", 400000.0) / 1000)
     EfMin = round(gas.get("e_field_min_vcm", 100.0))
-    n   = gas.get("n_field_points", 20)
-    c   = gas.get("n_magboltz_collisions", 10)
+    n   = gas.get("n_field_points", 10)
+    c   = gas.get("n_magboltz_collisions", 2)
     pen = "pen" if gas.get("enable_penning", True) else "nopen"
     return f"{g1}{f1}_{g2}_{f2}_T{T}_P{P}_Ee{Ee}_Ef{EfMin}v-{Ef}k_n{n}_c{c}_{pen}.gas"
 
@@ -110,6 +111,7 @@ class SimRunner(QThread):
     log_line = pyqtSignal(str)   # one stdout line
     finished = pyqtSignal(str)   # emits the run output directory on success
     failed   = pyqtSignal(str)   # emits an error message on failure
+    stopped  = pyqtSignal()      # user asked to stop (not an error)
 
     def __init__(self, config_dict: dict, out_dir: str,
                  run_name: str = "", parent=None):
@@ -118,11 +120,13 @@ class SimRunner(QThread):
         self._out_dir   = out_dir
         self._run_name  = run_name          # passed as --run-name to binary
         self._proc: subprocess.Popen | None = None
+        self._stopped   = False             # set when stop() is requested
 
     # ── public ──────────────────────────────────────────────────────────
 
     def stop(self):
         """Ask the subprocess to terminate (called from the main thread)."""
+        self._stopped = True
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
 
@@ -171,6 +175,9 @@ class SimRunner(QThread):
             except OSError:
                 pass
 
+        if self._stopped:
+            self.stopped.emit()          # user-initiated stop — not an error
+            return
         if ret != 0:
             self.failed.emit(f"Binary exited with code {ret}")
             return
@@ -379,17 +386,26 @@ class ConfigPanel(QScrollArea):
 
         self.penning = QCheckBox()
         self.penning.setChecked(True)
-        self.ncoll = self._spin(1, 100, 10)
+        self.ncoll = self._spin(1, 100, 2)
         self.ncoll.setToolTip("Magboltz collision cycles per field point (higher = more accurate)")
         self.w_value = self._dspin(10.0, 100.0, 0.5, 1, 26.0)
         self.w_value.setToolTip("Effective ionisation energy W [eV per ion pair] for primary electron count")
 
         self.max_electron_energy = self._dspin(100.0, 100_000.0, 100.0, 0, 2000.0)
         self.max_electron_energy.setToolTip(
-            "Upper electron energy for Magboltz cross-section table [eV].\n"
-            "Must exceed peak electron energy near the wire (~500–1000 eV)."
+            "EFINAL of the Magboltz transport table [eV].\n"
+            "Also keys the cached .gas filename."
         )
-        self.n_field_pts = self._spin(5, 500, 20)
+        self.transport_max_energy = self._dspin(10.0, 100_000.0, 50.0, 0, 200.0)
+        self.transport_max_energy.setToolTip(
+            "Ceiling of the microscopic collision-rate table [eV].\n"
+            "Applied after the gas table is loaded, so it does not change the\n"
+            "cached .gas file. Lower values give finer energy bins; it only needs\n"
+            "to exceed the energies electrons actually reach (a THGEM's ~20 kV/cm\n"
+            "peak field keeps them at a few eV). Garfield raises it automatically\n"
+            "if an electron ever exceeds it."
+        )
+        self.n_field_pts = self._spin(5, 500, 10)
         self.n_field_pts.setToolTip(
             "Number of log-spaced E-field points for the Magboltz transport table.\n"
             "More points → smoother interpolation; fewer → faster gas generation."
@@ -399,7 +415,7 @@ class ConfigPanel(QScrollArea):
             "Minimum E-field in the Magboltz table [V/cm].\n"
             "100 V/cm is suitable for most TGC operating conditions."
         )
-        self.e_field_max = self._dspin(10_000.0, 1_000_000.0, 10_000.0, 0, 300_000.0)
+        self.e_field_max = self._dspin(10_000.0, 1_000_000.0, 10_000.0, 0, 400_000.0)
         self.e_field_max.setToolTip(
             "Maximum E-field in the Magboltz table [V/cm].\n"
             "Must exceed the peak near-wire field (~200–400 kV/cm at 1900 V)."
@@ -415,6 +431,7 @@ class ConfigPanel(QScrollArea):
         gas_form.addRow("Magboltz ncoll",      self.ncoll)
         gas_form.addRow("W-value [eV]",        self.w_value)
         gas_form.addRow("Max e⁻ energy [eV]",  self.max_electron_energy)
+        gas_form.addRow("Transport ceiling [eV]", self.transport_max_energy)
         gas_form.addRow("Field points",        self.n_field_pts)
         gas_form.addRow("E-field min [V/cm]", self.e_field_min)
         gas_form.addRow("E-field max [V/cm]", self.e_field_max)
@@ -446,10 +463,12 @@ class ConfigPanel(QScrollArea):
         self.time_window = self._dspin(10.0, 100000.0, 10.0, 1, 300.0)
         self.time_step   = self._dspin(0.1, 10.0, 0.1, 2, 0.5)
         self.enable_ion_drift = QCheckBox()
-        self.enable_ion_drift.setChecked(True)
+        self.enable_ion_drift.setChecked(False)
         self.enable_ion_drift.setToolTip(
-            "Drift positive ions after each avalanche (DriftLineRKF).\n"
-            "Disabling skips ion signal computation and greatly speeds up runs."
+            "Drift positive ions after each avalanche (AvalancheMC, bounded).\n"
+            "Off by default: ions induce ~nothing on the anode, so the signal is\n"
+            "unchanged, and ions are ~1000× slower to transport. Enable for the\n"
+            "3D ion-path view or ion-backflow studies."
         )
         self.store_drift_lines = QCheckBox()
         self.store_drift_lines.setChecked(False)
@@ -460,10 +479,24 @@ class ConfigPanel(QScrollArea):
         )
         self.ion_max_step = self._dspin(0.0, 100.0, 1.0, 1, 5.0)
         self.ion_max_step.setToolTip(
-            "Cap on the DriftLineRKF integration step [µm].\n"
-            "Resolves the early ion signal (first ~10 ns after the spike);\n"
-            "uncapped steps leave a flat-shelf artifact there.\n"
-            "0 disables; 5 µm costs ~5× ion-drift CPU."
+            "AvalancheMC ion drift distance step [µm].\n"
+            "Smaller steps resolve the early ion signal and curved paths but cost\n"
+            "proportionally more CPU. 0 uses the AvalancheMC default step."
+        )
+        self.ion_time_window = self._dspin(1000.0, 1.0e7, 1000.0, 0, 1.0e6)
+        self.ion_time_window.setToolTip(
+            "Ion-drift time-window backstop [ns].\n"
+            "Terminates an ion trapped at a field stagnation point so it can never\n"
+            "loop indefinitely (the old DriftLineRKF had no such bound → hang/OOM).\n"
+            "1 ms comfortably exceeds a full drift-gap ion transit (~0.6 ms)."
+        )
+        self.max_ions_drifted = self._spin(0, 10000000, 200)
+        self.max_ions_drifted.setToolTip(
+            "Max avalanche ions back-drifted per event (0 = all).\n"
+            "Ions drift away from the anode and induce ~nothing on it, so the\n"
+            "anode signal is unchanged; transporting all of them dominates the\n"
+            "runtime at high gain. Keep ~200 for fast runs; raise or set 0 for\n"
+            "ion-backflow studies."
         )
         self.random_seed = self._spin(0, 2147483647, 0)
         self.random_seed.setToolTip(
@@ -478,6 +511,8 @@ class ConfigPanel(QScrollArea):
         sim_form.addRow("Ion transport",      self.enable_ion_drift)
         sim_form.addRow("Store drift lines",  self.store_drift_lines)
         sim_form.addRow("Ion max step [µm]",  self.ion_max_step)
+        sim_form.addRow("Ion time window [ns]", self.ion_time_window)
+        sim_form.addRow("Max ions drifted",   self.max_ions_drifted)
         sim_form.addRow("Random seed",        self.random_seed)
         root_layout.addWidget(sim_box)
 
@@ -567,9 +602,9 @@ class ConfigPanel(QScrollArea):
             "e_field_max_vcm":        self.e_field_max.value(),
         }
         name = derive_gas_filename(gas)
-        exists = (THGEM_DIR / name).exists()
+        exists = (GAS_DIR / name).exists()
         status = "✓ exists" if exists else "will be generated"
-        self.gas_file_label.setText(f"{name}\n[{status}]")
+        self.gas_file_label.setText(f"gas/{name}\n[{status}]")
 
     def _update_derived_voltages(self):
         """Show the electrode potentials derived from the physics fields.
@@ -656,6 +691,7 @@ class ConfigPanel(QScrollArea):
                 "n_magboltz_collisions":  self.ncoll.value(),
                 "w_value_eV":             self.w_value.value(),
                 "max_electron_energy_eV": self.max_electron_energy.value(),
+                "transport_max_energy_eV": self.transport_max_energy.value(),
                 "n_field_points":         self.n_field_pts.value(),
                 "e_field_min_vcm":        self.e_field_min.value(),
                 "e_field_max_vcm":        self.e_field_max.value(),
@@ -668,6 +704,8 @@ class ConfigPanel(QScrollArea):
                 "enable_ion_drift":   self.enable_ion_drift.isChecked(),
                 "store_drift_lines":  self.store_drift_lines.isChecked(),
                 "ion_max_step_um":    self.ion_max_step.value(),
+                "ion_time_window_ns": self.ion_time_window.value(),
+                "max_ions_drifted":   self.max_ions_drifted.value(),
                 "random_seed":        self.random_seed.value(),
             },
         }
@@ -726,21 +764,24 @@ class ConfigPanel(QScrollArea):
         self.temperature.setValue(gas.get("temperature_K", 293.15))
         self.pressure.setValue(   gas.get("pressure_Torr", 760.0))
         self.penning.setChecked(  gas.get("enable_penning", True))
-        self.ncoll.setValue(      gas.get("n_magboltz_collisions", 10))
+        self.ncoll.setValue(      gas.get("n_magboltz_collisions", 2))
         self.w_value.setValue(    gas.get("w_value_eV", 26.0))
         self.max_electron_energy.setValue(gas.get("max_electron_energy_eV", 2000.0))
-        self.n_field_pts.setValue(        gas.get("n_field_points", 20))
+        self.transport_max_energy.setValue(gas.get("transport_max_energy_eV", 200.0))
+        self.n_field_pts.setValue(        gas.get("n_field_points", 10))
         self.e_field_min.setValue(        gas.get("e_field_min_vcm", 100.0))
-        self.e_field_max.setValue(        gas.get("e_field_max_vcm", 300_000.0))
+        self.e_field_max.setValue(        gas.get("e_field_max_vcm", 400_000.0))
 
         sim = d.get("simulation", {})
         self.n_events.setValue(        sim.get("n_events", 1000))
         self.max_aval.setValue(        sim.get("max_avalanche_size", 500000))
         self.time_window.setValue(     sim.get("time_window_ns", 300.0))
         self.time_step.setValue(       sim.get("time_step_ns", 0.5))
-        self.enable_ion_drift.setChecked(sim.get("enable_ion_drift", True))
+        self.enable_ion_drift.setChecked(sim.get("enable_ion_drift", False))
         self.store_drift_lines.setChecked(sim.get("store_drift_lines", True))
         self.ion_max_step.setValue(      sim.get("ion_max_step_um", 5.0))
+        self.ion_time_window.setValue(   sim.get("ion_time_window_ns", 1.0e6))
+        self.max_ions_drifted.setValue(  int(sim.get("max_ions_drifted", 200)))
         self.random_seed.setValue(       int(sim.get("random_seed", 0)))
 
 
@@ -2517,9 +2558,18 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
 
         self.config_panel  = ConfigPanel()
+        # Open on the shipped default configuration so the GUI is a single source
+        # of truth with config/default_thgem.json (avoids widget defaults drifting
+        # from the tuned config).  Falls back to the widget defaults if it is absent.
+        _default_cfg = THGEM_DIR / "config" / "default_thgem.json"
+        if _default_cfg.exists():
+            try:
+                with open(_default_cfg) as _f:
+                    self.config_panel.load_from_dict(json.load(_f))
+            except Exception:  # noqa: BLE001
+                pass
         self.results_panel = ResultsPanel()
-        # Give the results tabs live access to the Readout settings (E-Field /
-        # Weighting Field tabs mark the readout cathode + resistive layer).
+        # Give the E-Field tab live access to the geometry for its overlay.
         self.results_panel.config_panel = self.config_panel
 
         splitter.addWidget(self.config_panel)
@@ -2578,6 +2628,7 @@ class MainWindow(QMainWindow):
         self._runner.log_line.connect(self.results_panel.append_log)
         self._runner.finished.connect(self._on_run_finished)
         self._runner.failed.connect(self._on_run_failed)
+        self._runner.stopped.connect(self._on_run_stopped)
 
         self.act_run.setEnabled(False)
         self.act_stop.setEnabled(True)
@@ -2620,7 +2671,7 @@ class MainWindow(QMainWindow):
     def _try_load_gas_props(self):
         """Load Magboltz properties CSV if it exists for the current gas config."""
         gas_cfg = self.config_panel.to_config_dict().get("gas", {})
-        props_path = THGEM_DIR / derive_gas_props_filename(gas_cfg)
+        props_path = GAS_DIR / derive_gas_props_filename(gas_cfg)
         if props_path.exists():
             self.results_panel.draw_gas_props(str(props_path))
 
@@ -2630,6 +2681,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Failed: {msg}")
         self.results_panel.append_log(f"\n[GUI] ERROR: {msg}")
         QMessageBox.warning(self, "Simulation failed", msg)
+
+    def _on_run_stopped(self):
+        """User clicked Stop (or closed the window) — not an error."""
+        self.act_run.setEnabled(True)
+        self.act_stop.setEnabled(False)
+        self.statusBar().showMessage("Run stopped")
+        self.results_panel.append_log("\n[GUI] Run stopped by user.")
 
     # ── Config load/save ──────────────────────────────────────────────────
 
