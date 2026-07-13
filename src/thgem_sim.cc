@@ -50,6 +50,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -1155,6 +1156,18 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   const std::string distLabel = distOptMm.has_value()
       ? FormatNumber(*distOptMm) + " mm" : "random";
 
+  // Primary-electron fate diagnostic: collection efficiency and attachment are the
+  // two loss channels a THGEM lives or dies by, so tally, over the events, how many
+  // multiply (ne > 1) and how each primary ends — its Garfield status combined with
+  // where it stopped (in the hole, on the plate, in the drift gap, below the plate).
+  std::size_t nMultiplied = 0;
+  std::map<std::string, int> primaryFate;
+  auto classifyEndZone = [&g](double xe, double ye, double ze) -> std::string {
+    if (ze > g.zTopCuTop) return "in-gap";       // still above the plate
+    if (ze < g.zBotCuBot) return "below-plate";  // through the hole toward the anode
+    return (std::hypot(xe, ye) < g.rHoleCm) ? "in-hole" : "in-plate";
+  };
+
   // ── Event loop ───────────────────────────────────────────────────────────────
   auto tEvent = std::chrono::steady_clock::now();
   for (std::size_t ev = 0; ev < sim.nEvents; ++ev) {
@@ -1190,6 +1203,15 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     avalancheSizes.push_back(static_cast<double>(totalAvalElectrons));
 
     const std::size_t nEp = aval.GetNumberOfElectronEndpoints();
+
+    // Fate of this event's primary electron (endpoint 0 is track 0, the primary).
+    if (ne > 1) ++nMultiplied;
+    if (nEp > 0) {
+      double fx0, fy0, fz0, ft0, fe0, fx1, fy1, fz1, ft1, fe1; int fst;
+      aval.GetElectronEndpoint(0, fx0, fy0, fz0, ft0, fe0,
+                                  fx1, fy1, fz1, ft1, fe1, fst);
+      ++primaryFate[DriftStatusToString(fst) + " @ " + classifyEndZone(fx1, fy1, fz1)];
+    }
 
     // Primary electron drift line (track 0).
     primaryX.clear(); primaryY.clear(); primaryZ.clear();
@@ -1331,6 +1353,16 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
                 << (ev + 1) << "/" << sim.nEvents << " events processed\n";
     }
   }
+
+  // Primary-electron fate summary (diagnostic): multiply fraction + where/why each
+  // primary ended, so a run that "shows no avalanche" can be read as collection loss
+  // (on-plate), attachment, or something anomalous (e.g. outside time window).
+  std::cout << "  [fate] multiplied " << nMultiplied << "/" << sim.nEvents
+            << " events; primary endpoint:";
+  for (const auto& [label, cnt] : primaryFate) {
+    std::cout << " {" << label << ": " << cnt << "}";
+  }
+  std::cout << "\n";
 
   // ── Write histograms ─────────────────────────────────────────────────────────
   if (distDir) {

@@ -866,6 +866,7 @@ class ResultsPanel(QTabWidget):
         self._trk_pan_x:      float = 0.0   # cm offset of X visible centre
         self._trk_pan_y:      float = 0.0   # cm offset of Y visible centre
         self._trk_pan_z:      float = 0.0   # cm offset of Z visible centre
+        self._trk_n_holes:    int   = 4     # N×N block of holes drawn in the 3D view
         self._efield_cache: dict | None = None   # {x, y, Ex, Ey} computed arrays
         self._efield_root_canvas  = None   # ROOT TCanvas for E-field maps
         self._efield_objects: list = []
@@ -1069,6 +1070,19 @@ class ResultsPanel(QTabWidget):
         trk_zoom_out_btn.clicked.connect(lambda: self._trk_adjust_zoom(1.0 / 0.7))
         trk_ctrl_h.addWidget(trk_zoom_in_btn)
         trk_ctrl_h.addWidget(trk_zoom_out_btn)
+
+        trk_ctrl_h.addSpacing(16)
+        trk_ctrl_h.addWidget(QLabel("Holes:"))
+        self.trk_holes_spin = QSpinBox()
+        self.trk_holes_spin.setRange(1, 15)
+        self.trk_holes_spin.setValue(self._trk_n_holes)
+        self.trk_holes_spin.setMaximumWidth(52)
+        self.trk_holes_spin.setToolTip(
+            "Number of holes drawn per side (N×N) in the 3D view.\n"
+            "The simulated hole sits at the centre; this is display-only.")
+        self.trk_holes_spin.valueChanged.connect(self._on_trk_holes_changed)
+        trk_ctrl_h.addWidget(self.trk_holes_spin)
+
         trk_ctrl_h.addStretch()
         tracks_layout.addWidget(trk_ctrl_row)
 
@@ -2320,21 +2334,16 @@ class ResultsPanel(QTabWidget):
             _draw_plane_z(z_top,   ROOT.kGray + 2, 1)    # plate top face
             _draw_plane_z(z_bot,   ROOT.kGray + 2, 1)    # plate bottom face
 
-            # Perforated plate: tile the hole array across the visible window when the
-            # plate slab is in z-view.  Cap the count per axis as a safety net so a
-            # far zoom-out cannot spawn thousands of cylinders.
+            # Perforated plate: draw an N×N block of holes (self._trk_n_holes per side,
+            # set by the "Holes" spinbox) centred so the simulated hole at the origin is
+            # always included.  Only when the plate slab is within the z-view.
             _plate_in_view = (self._trk_pan_z - _hr <= z_top and
                               z_bot <= self._trk_pan_z + _hr)
             if pitch > 0 and _plate_in_view:
-                _cap = 15
-                i_lo = int(np.floor((self._trk_pan_x - _hr - r_cm) / pitch))
-                i_hi = int(np.ceil((self._trk_pan_x + _hr + r_cm) / pitch))
-                j_lo = int(np.floor((self._trk_pan_y - _hr - r_cm) / pitch))
-                j_hi = int(np.ceil((self._trk_pan_y + _hr + r_cm) / pitch))
-                i_hi = min(i_hi, i_lo + _cap)
-                j_hi = min(j_hi, j_lo + _cap)
-                for i in range(i_lo, i_hi + 1):
-                    for j in range(j_lo, j_hi + 1):
+                _n = max(1, int(self._trk_n_holes))
+                _half = _n // 2
+                for i in range(-_half, _n - _half):
+                    for j in range(-_half, _n - _half):
                         _draw_cylinder(i * pitch, j * pitch, z_bot, z_top,
                                        ROOT.kOrange + 7, 0.55)
 
@@ -2437,6 +2446,11 @@ class ResultsPanel(QTabWidget):
     def _trk_adjust_zoom(self, factor: float) -> None:
         """Scale the visible axis range and redraw (factor < 1 = zoom in)."""
         self._trk_zoom_scale = max(0.005, min(20.0, self._trk_zoom_scale * factor))
+        self._update_track_plot()
+
+    def _on_trk_holes_changed(self, value: int) -> None:
+        """Redraw with an N×N block of holes (display-only)."""
+        self._trk_n_holes = int(value)
         self._update_track_plot()
 
     def _trk_pan(self, axis: str, direction: int) -> None:
