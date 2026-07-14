@@ -52,6 +52,17 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+# ROOT colour palettes offered by the E-Field / Weighting Field tabs.  The maps are
+# drawn in an interactive ROOT canvas (right-click to zoom), so these are ROOT's own
+# palettes (TColor::EColorPalette) rather than matplotlib names.
+_ROOT_PALETTE = {
+    "Viridis":     112,
+    "Bird":         57,
+    "Cividis":     113,
+    "Thermometer": 105,
+    "Dark body":    53,
+}
+
 # ---------------------------------------------------------------------------
 # Readout-stack geometry (shared by the E-Field and Weighting Field overlays)
 # ---------------------------------------------------------------------------
@@ -1149,28 +1160,68 @@ class ResultsPanel(QTabWidget):
         self.ef_quantity.currentIndexChanged.connect(self._redraw_thgem_field)
         ef_h.addWidget(self.ef_quantity)
         ef_h.addSpacing(12)
-        ef_h.addWidget(QLabel("Colormap:"))
+        ef_h.addWidget(QLabel("Palette:"))
         self.ef_cmap = QComboBox()
-        self.ef_cmap.addItems(["viridis", "plasma", "inferno", "turbo"])
+        self.ef_cmap.addItems(list(_ROOT_PALETTE))
         self.ef_cmap.currentIndexChanged.connect(self._redraw_thgem_field)
         ef_h.addWidget(self.ef_cmap)
         ef_h.addStretch()
         efield_layout.addWidget(ef_ctrl)
 
-        self.efield_canvas = MplCanvas(nrows=1, ncols=2, figsize=(10, 4.5))
-        efield_layout.addWidget(self.efield_canvas)
-
         ef_hint = QLabel(
-            "The THGEM field is solved by neBEM in the simulation and dumped to the "
-            "run ROOT file. Run a simulation to populate this tab: left = |E| (or "
-            "potential) on an x-z slice through the hole centre (electrode/hole "
-            "overlay from the config); right = the on-hole-axis profile.")
+            "The THGEM field is solved by neBEM in the simulation and dumped to the run "
+            "ROOT file — run a simulation to populate this tab.\n"
+            "The ROOT canvas opens automatically: right-click inside it to zoom, rescale "
+            "the axes, or save. Left pad = |E| (or potential) on an x–z slice through the "
+            "hole centre, with the electrode/hole overlay; right pad = the on-hole-axis "
+            "profile.")
         ef_hint.setWordWrap(True)
         ef_hint.setStyleSheet("color: grey; font-size: 11px;")
         efield_layout.addWidget(ef_hint)
+        efield_layout.addStretch()
 
-        self._thgem_field = None   # cached dict from load_thgem_field
+        self._thgem_field = None   # cached ROOT objects from load_thgem_field
         self.addTab(efield_widget, "E-Field")
+
+        # ── Weighting Field tab (true neBEM Shockley–Ramo field of the anode) ──
+        wfield_widget = QWidget()
+        wfield_layout = QVBoxLayout(wfield_widget)
+        wfield_layout.setContentsMargins(8, 6, 8, 6)
+        wfield_layout.setSpacing(6)
+
+        wf_ctrl = QWidget()
+        wf_h = QHBoxLayout(wf_ctrl)
+        wf_h.setContentsMargins(0, 0, 0, 0)
+        wf_h.addWidget(QLabel("Quantity:"))
+        self.wf_quantity = QComboBox()
+        self.wf_quantity.addItems(["W (potential)", "|E_w| [1/cm]"])
+        self.wf_quantity.currentIndexChanged.connect(self._redraw_thgem_wfield)
+        wf_h.addWidget(self.wf_quantity)
+        wf_h.addSpacing(12)
+        wf_h.addWidget(QLabel("Palette:"))
+        self.wf_cmap = QComboBox()
+        self.wf_cmap.addItems(list(_ROOT_PALETTE))
+        self.wf_cmap.currentIndexChanged.connect(self._redraw_thgem_wfield)
+        wf_h.addWidget(self.wf_cmap)
+        wf_h.addStretch()
+        wfield_layout.addWidget(wf_ctrl)
+
+        wf_hint = QLabel(
+            "Exact Shockley–Ramo weighting field of the anode, solved by neBEM (1 V on the "
+            "anode, 0 V on all other electrodes) and cached per geometry — it does not "
+            "depend on the applied voltages, so a ΔV scan reuses one solve.\n"
+            "Note the signal itself is computed with the analytic parallel-plate stand-in "
+            "(W ramps linearly across the induction gap, 0 above the bottom copper). This "
+            "map is the truth to compare it against: the bottom copper does not screen "
+            "perfectly, so W leaks a few % into the hole. Right-click the ROOT canvas to "
+            "zoom.")
+        wf_hint.setWordWrap(True)
+        wf_hint.setStyleSheet("color: grey; font-size: 11px;")
+        wfield_layout.addWidget(wf_hint)
+        wfield_layout.addStretch()
+
+        self._thgem_wfield = None   # cached ROOT objects from load_thgem_wfield
+        self.addTab(wfield_widget, "Weighting Field")
 
 
         gas_widget = QWidget()
@@ -2528,6 +2579,16 @@ class ResultsPanel(QTabWidget):
 
     # ── E-Field ────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _clone_root(obj):
+        """Detach a histogram/graph from its TFile so it survives the file being closed."""
+        c = obj.Clone()
+        try:
+            c.SetDirectory(0)      # TH*; TGraph has no SetDirectory
+        except AttributeError:
+            pass
+        return c
+
     def load_thgem_field(self, root_path: str):
         """Load the neBEM field-map dump (field/ dir) from the run ROOT file."""
         try:
@@ -2544,67 +2605,148 @@ class ResultsPanel(QTabWidget):
             gV   = f.Get("field/g_axis_potential")
             if not hmag:
                 return
-            nx, nz = hmag.GetNbinsX(), hmag.GetNbinsY()
-            mag = np.empty((nz, nx)); pot = np.empty((nz, nx))
-            for iz in range(nz):
-                for ix in range(nx):
-                    mag[iz, ix] = hmag.GetBinContent(ix + 1, iz + 1)
-                    pot[iz, ix] = hpot.GetBinContent(ix + 1, iz + 1) if hpot else 0.0
-            xax, zax = hmag.GetXaxis(), hmag.GetYaxis()
-            extent = [xax.GetXmin(), xax.GetXmax(), zax.GetXmin(), zax.GetXmax()]
             self._thgem_field = dict(
-                mag=mag, pot=pot, extent=extent,
-                axZ=list(gE.GetX()) if gE else [],
-                axE=list(gE.GetY()) if gE else [],
-                axV=list(gV.GetY()) if gV else [])
+                mag=self._clone_root(hmag),
+                pot=self._clone_root(hpot) if hpot else None,
+                axE=self._clone_root(gE) if gE else None,
+                axV=self._clone_root(gV) if gV else None)
         finally:
             f.Close()
         self._redraw_thgem_field()
+
+    def load_thgem_wfield(self, root_path: str):
+        """Load the neBEM anode weighting map (field/h_wpot, …) from the run ROOT file.
+
+        Runs produced before the weighting solve existed simply have no such objects;
+        the tab then stays empty rather than raising.
+        """
+        try:
+            import ROOT  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return
+        f = ROOT.TFile.Open(root_path)
+        if not f or f.IsZombie():
+            return
+        try:
+            hw  = f.Get("field/h_wpot")
+            hwe = f.Get("field/h_wfield_mag")
+            gw  = f.Get("field/g_axis_wpot")
+            if not hw:
+                # Older run: clear any map still shown from a previously loaded run,
+                # so the tab never displays another run's weighting field.
+                self._thgem_wfield = None
+                self._wfield_objects.clear()
+                if self._wfield_root_canvas is not None:
+                    self._wfield_root_canvas.Clear()
+                    self._wfield_root_canvas.Update()
+                self.append_log(
+                    "[GUI] This run has no weighting map — re-run to populate "
+                    "the Weighting Field tab.")
+                return
+            self._thgem_wfield = dict(
+                wpot=self._clone_root(hw),
+                wmag=self._clone_root(hwe) if hwe else None,
+                axW=self._clone_root(gw) if gw else None)
+        finally:
+            f.Close()
+        self._redraw_thgem_wfield()
+
+    def _draw_field_canvas(self, attr, cname, ctitle, h2, prof, palette, objects):
+        """Draw a TH2 colour map (+ geometry overlay) and an on-axis profile into an
+        interactive ROOT canvas — right-click to zoom, rescale the axes, or save."""
+        import ROOT  # noqa: PLC0415
+        ROOT.gROOT.SetBatch(False)
+        canvas = self._ensure_canvas(attr, cname, ctitle, 1150, 540)
+        canvas.cd()
+        canvas.Clear()
+        objects.clear()
+        canvas.Divide(2, 1)
+
+        ROOT.gStyle.SetOptStat(0)
+        ROOT.gStyle.SetPalette(_ROOT_PALETTE.get(palette, 112))
+
+        canvas.cd(1)
+        ROOT.gPad.SetRightMargin(0.16)
+        ROOT.gPad.SetLeftMargin(0.13)
+        if h2:
+            h2.Draw("COLZ")
+            objects.append(h2)
+            for ln in self._root_geometry_lines(h2):
+                ln.Draw("SAME")
+                objects.append(ln)
+
+        canvas.cd(2)
+        ROOT.gPad.SetGridx()
+        ROOT.gPad.SetGridy()
+        ROOT.gPad.SetLeftMargin(0.15)
+        if prof:
+            prof.SetLineWidth(2)
+            prof.SetLineColor(ROOT.kAzure + 2)
+            prof.Draw("AL")
+            objects.append(prof)
+
+        canvas.Modified()
+        canvas.Update()
+        return canvas
+
+    def _root_geometry_lines(self, h2):
+        """TLine overlay of the copper surfaces and hole walls, spanning the map's x-range."""
+        import ROOT  # noqa: PLC0415
+        lines = []
+        cp = self.config_panel
+        if cp is None:
+            return lines
+        pitch = cp.hole_pitch.value() * 1e-4       # µm -> cm
+        r     = cp.hole_diameter.value() * 0.5e-4
+        tdiel = cp.plate_thickness.value() * 1e-4
+        tcu   = cp.copper_thickness.value() * 1e-4
+        zdh   = tdiel / 2.0
+        x0, x1 = h2.GetXaxis().GetXmin(), h2.GetXaxis().GetXmax()
+
+        for z in (zdh, zdh + tcu, -zdh, -(zdh + tcu)):
+            ln = ROOT.TLine(x0, z, x1, z)
+            ln.SetLineColor(ROOT.kWhite)
+            ln.SetLineWidth(1)
+            lines.append(ln)
+        ncells = int(math.ceil(x1 / pitch)) + 1 if pitch > 0 else 1
+        for c in range(-ncells, ncells + 1):
+            xc = c * pitch
+            for xw in (xc - r, xc + r):
+                if x0 <= xw <= x1:
+                    ln = ROOT.TLine(xw, -(zdh + tcu), xw, zdh + tcu)
+                    ln.SetLineColor(ROOT.kWhite)
+                    ln.SetLineStyle(2)
+                    ln.SetLineWidth(1)
+                    lines.append(ln)
+        return lines
 
     def _redraw_thgem_field(self):
         d = self._thgem_field
         if not d:
             return
-        fig = self.efield_canvas.figure
-        fig.clear()
-        ax1, ax2 = fig.subplots(1, 2)
         want_pot = self.ef_quantity.currentIndex() == 1
-        data = d["pot"] if want_pot else d["mag"]
-        im = ax1.imshow(data, origin="lower", aspect="auto", extent=d["extent"],
-                        cmap=self.ef_cmap.currentText())
-        ax1.set_xlabel("x [cm]"); ax1.set_ylabel("z [cm]")
-        ax1.set_title("Potential [V]" if want_pot
-                      else "|E| [kV/cm]  (x-z through hole)")
-        fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
-        self._overlay_thgem_geometry(ax1, d["extent"])
-        if want_pot and d["axV"]:
-            ax2.plot(d["axV"], d["axZ"]); ax2.set_xlabel("V [V]")
-        elif d["axE"]:
-            ax2.plot(d["axE"], d["axZ"]); ax2.set_xlabel("|E| [kV/cm]")
-        ax2.set_ylabel("z [cm]"); ax2.set_title("On hole axis")
-        ax2.grid(True, alpha=0.3)
-        fig.tight_layout()
-        self.efield_canvas.draw_idle()
+        h2   = d["pot"] if want_pot else d["mag"]
+        prof = d["axV"] if want_pot else d["axE"]
+        try:
+            self._draw_field_canvas(
+                "_efield_root_canvas", "thgem_efield", "THGEM E-Field",
+                h2, prof, self.ef_cmap.currentText(), self._efield_objects)
+        except Exception as exc:  # noqa: BLE001
+            self.append_log(f"[GUI] E-field canvas error: {exc}")
 
-    def _overlay_thgem_geometry(self, ax, extent):
-        """Overlay the copper surfaces and hole walls from the config panel."""
-        cp = self.config_panel
-        if cp is None:
+    def _redraw_thgem_wfield(self):
+        d = self._thgem_wfield
+        if not d:
             return
-        pitch = cp.hole_pitch.value() * 1e-4       # um -> cm
-        r     = cp.hole_diameter.value() * 0.5e-4
-        tdiel = cp.plate_thickness.value() * 1e-4
-        tcu   = cp.copper_thickness.value() * 1e-4
-        zdh   = tdiel / 2.0
-        for z in (zdh, zdh + tcu, -zdh, -(zdh + tcu)):
-            ax.axhline(z, color="w", lw=0.8, alpha=0.7)
-        ncells = int(math.ceil(extent[1] / pitch)) + 1 if pitch > 0 else 1
-        for c in range(-ncells, ncells + 1):
-            xc = c * pitch
-            for xw in (xc - r, xc + r):
-                if extent[0] <= xw <= extent[1]:
-                    ax.plot([xw, xw], [-(zdh + tcu), zdh + tcu],
-                            color="w", lw=0.6, ls="--", alpha=0.6)
+        want_mag = self.wf_quantity.currentIndex() == 1
+        h2   = d["wmag"] if want_mag else d["wpot"]
+        prof = None if want_mag else d["axW"]
+        try:
+            self._draw_field_canvas(
+                "_wfield_root_canvas", "thgem_wfield", "THGEM Anode Weighting Field",
+                h2, prof, self.wf_cmap.currentText(), self._wfield_objects)
+        except Exception as exc:  # noqa: BLE001
+            self.append_log(f"[GUI] Weighting-field canvas error: {exc}")
 
 
 class MainWindow(QMainWindow):
@@ -2747,6 +2889,7 @@ class MainWindow(QMainWindow):
         self.results_panel.load_waveform_data(root_path)
         self.results_panel.load_track_data(root_path, run_dir)
         self.results_panel.load_thgem_field(root_path)
+        self.results_panel.load_thgem_wfield(root_path)
         self._try_load_gas_props()
         self.results_panel.setCurrentIndex(1)   # switch to Summary tab
         self.results_panel._save_plots_root(run_dir)

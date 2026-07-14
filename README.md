@@ -65,12 +65,33 @@ here. Instead:
 3. The sampler writes an **in-solid flag** per node, so `ComponentGrid::GetMedium` returns `null`
    inside the copper and dielectric and electrons are absorbed on contact. Without this a
    `ComponentGrid` has no material information and charges would drift straight through metal.
-4. The anode's Shockley–Ramo weighting field is supplied analytically by a `ComponentUser`
-   (parallel-plate model over the induction gap, screened above the bottom copper) rather than a
-   second neBEM solve.
+4. The anode's Shockley–Ramo weighting field used for the **signal** is supplied analytically by a
+   `ComponentUser` (parallel-plate model over the induction gap, screened above the bottom copper)
+   rather than a second neBEM solve. neBEM *also* solves the electrode's **true** weighting field
+   (the anode solid is labelled, so 1 V is placed on it and 0 V on all others); that map is dumped
+   for the Weighting Field tab and is what validates the analytic stand-in — see below.
 
 The solved field is also dumped to the run's ROOT file (`field/`) as an x–z slice through the hole
 centre plus an on-axis profile, which is what the GUI's **E-Field** tab renders.
+
+## E-Field and Weighting Field views
+
+Both tabs draw into an **interactive ROOT canvas** — right-click inside it to zoom, rescale the axes,
+or save — showing an x–z colour map through the hole centre (with the copper/hole overlay) next to
+the on-hole-axis profile. Each has a Quantity and a Palette selector.
+
+- **E-Field** — `|E|` or the potential, from the neBEM solve.
+- **Weighting Field** — the anode's **true** Shockley–Ramo weighting potential `W` (or `|E_w|`),
+  solved by neBEM. It is cached separately from the transport field and keyed on the **geometry
+  only** — a weighting field does not depend on the applied voltages, so a whole ΔV scan reuses a
+  single solve. (Because a cached transport field means neBEM is never initialised, the weighting map
+  needs its own cache; the first run on a given geometry solves once to build it.)
+
+The weighting map is the honest check on the analytic stand-in used for the signal. The stand-in
+assumes the bottom copper screens perfectly (`W = 0` above it), whereas the hole is an open window:
+neBEM gives `W ≲ 3 %` just above the bottom copper and ~1 % inside the hole. An avalanche electron
+born in the hole and collected at the anode therefore induces `ΔW ≈ 0.99` instead of `1.00` — a **~1 %
+error on `Q_anode`**, so the parallel-plate stand-in is a good approximation and the signal stands.
 
 ## 3D Tracks view
 

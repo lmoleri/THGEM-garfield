@@ -194,6 +194,12 @@ constexpr std::size_t kMaxDispIonPaths      = 100;  // ion drift paths saved per
 constexpr std::size_t kMaxDispCloudPts      = 500;  // avalanche-cloud points saved per event
 constexpr std::size_t kMaxDispElectronPaths = 200;  // avalanche e⁻ drift lines saved per event
 
+// ─── Field / weighting map dump resolution (x–z slice through the hole centre) ─
+// Shared by the E-field and the weighting map so both land on an identical grid.
+// nx is odd, so the centre column (ix = kMapNx/2) sits exactly on the hole axis.
+constexpr int kMapNx = 81;
+constexpr int kMapNz = 161;
+
 // The transport grid spans exactly one unit cell in x/y (half-width = pitch/2)
 // and is tiled with mirror periodicity, so charges diffusing past a cell edge
 // re-enter the neighbouring cell instead of being lost (as in the Garfield GEM
@@ -757,11 +763,13 @@ class ThgemDetector {
     geo_.AddSolid(botCu.get(), &cu_);
     solids_.push_back(std::move(botCu));
 
-    // Anode readout plate one induction gap below the plate.  Its Ramo
-    // weighting field is supplied analytically by a ComponentUser (see
-    // SetupAnodeWeighting); neBEM only needs it as a fixed-potential electrode.
+    // Anode readout plate one induction gap below the plate.  The *signal* still
+    // uses the analytic ComponentUser weighting field (see SetupAnodeWeighting);
+    // the label lets neBEM additionally solve the true weighting field of this
+    // electrode (1 V here, 0 V on all others) for the Weighting Field view.
     auto anode = std::make_unique<SolidBox>(0., 0., geom_.zAnode, hx, hy, 0.);
     anode->SetBoundaryPotential(geom_.vAnode);
+    anode->SetLabel("anode");
     geo_.AddSolid(anode.get(), &cu_);
     solids_.push_back(std::move(anode));
 
@@ -840,7 +848,7 @@ class ThgemDetector {
 // on the hole axis, and write it to the ROOT file for the GUI's E-Field tab.
 void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir) {
   if (!dir) return;
-  constexpr int nx = 81, nz = 161;
+  constexpr int nx = kMapNx, nz = kMapNz;
   const double xLo = -g.pitchCm, xHi = g.pitchCm;   // two cells (via periodicity)
   const double zLo = g.zAnode,   zHi = g.zDrift;
 
@@ -889,6 +897,103 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
   gAxisV.Write("g_axis_potential");
   std::cout << "  Field map dumped (" << nx << "×" << nz << " x–z slice, "
             << "on-axis profile).\n";
+}
+
+// ─── Anode weighting field (true neBEM solve) ─────────────────────────────────
+// The *signal* is still computed with the analytic parallel-plate stand-in (see
+// SetupAnodeWeighting).  These sample the exact Shockley–Ramo weighting field of the
+// labelled anode electrode (1 V on it, 0 V on all others) so the GUI can display it —
+// and so the stand-in can be validated against the truth.
+struct WeightingMap {
+  std::vector<double> w;      // weighting potential (dimensionless), [iz*kMapNx + ix]
+  std::vector<double> emag;   // |E_w| [1/cm]
+  bool valid = false;
+};
+
+// Sample W and E_w on the same x–z slice DumpFieldMap uses; atomic write, so an
+// interrupted sample can never leave a truncated file that looks like a valid cache.
+void SampleWeightingToFile(ComponentNeBem3d& cmp, const ThgemGeom& g,
+                           const std::string& file) {
+  const std::string tmp = file + ".part";
+  {
+    std::ofstream out(tmp);
+    if (!out) throw std::runtime_error("Cannot write weighting cache: " + tmp);
+    out << std::setprecision(8);
+    const double xLo = -g.pitchCm, xHi = g.pitchCm;
+    const double zLo = g.zAnode,   zHi = g.zDrift;
+    for (int iz = 0; iz < kMapNz; ++iz) {
+      const double z = zLo + (iz + 0.5) * (zHi - zLo) / kMapNz;
+      for (int ix = 0; ix < kMapNx; ++ix) {
+        const double x = xLo + (ix + 0.5) * (xHi - xLo) / kMapNx;
+        double wx = 0., wy = 0., wz = 0.;
+        cmp.WeightingField(x, 0., z, wx, wy, wz, "anode");
+        const double wp = cmp.WeightingPotential(x, 0., z, "anode");
+        out << x << ' ' << z << ' ' << wp << ' '
+            << wx << ' ' << wy << ' ' << wz << '\n';
+      }
+    }
+    out.flush();
+    if (!out)
+      throw std::runtime_error("Write error while sampling weighting cache: " + tmp);
+  }  // close the stream before renaming
+  fs::rename(tmp, file);
+}
+
+// Read a weighting cache back.  Rejects a truncated file: it must hold exactly the grid.
+WeightingMap LoadWeightingMap(const std::string& file) {
+  WeightingMap m;
+  std::ifstream in(file);
+  if (!in) return m;
+  const std::size_t n = static_cast<std::size_t>(kMapNx) * kMapNz;
+  m.w.reserve(n);
+  m.emag.reserve(n);
+  double x, z, wp, wx, wy, wz;
+  while (in >> x >> z >> wp >> wx >> wy >> wz) {
+    m.w.push_back(wp);
+    m.emag.push_back(std::sqrt(wx * wx + wy * wy + wz * wz));
+  }
+  m.valid = (m.w.size() == n);
+  return m;
+}
+
+// Write the weighting map into the run's ROOT file for the GUI's Weighting Field tab.
+void DumpWeightingMap(const WeightingMap& m, const ThgemGeom& g, TDirectory* dir) {
+  if (!dir || !m.valid) return;
+  const double xLo = -g.pitchCm, xHi = g.pitchCm;
+  const double zLo = g.zAnode,   zHi = g.zDrift;
+
+  TH2D hW("h_wpot", "Anode weighting potential (neBEM);x [cm];z [cm]",
+          kMapNx, xLo, xHi, kMapNz, zLo, zHi);
+  TH2D hWE("h_wfield_mag", "Anode |E_{w}| (neBEM);x [cm];z [cm]",
+           kMapNx, xLo, xHi, kMapNz, zLo, zHi);
+  hW.SetDirectory(nullptr);
+  hWE.SetDirectory(nullptr);
+
+  std::vector<double> axZ, axW;
+  axZ.reserve(kMapNz);
+  axW.reserve(kMapNz);
+  const int ixAxis = kMapNx / 2;   // kMapNx is odd ⇒ this column is exactly x = 0
+
+  for (int iz = 0; iz < kMapNz; ++iz) {
+    for (int ix = 0; ix < kMapNx; ++ix) {
+      const std::size_t k = static_cast<std::size_t>(iz) * kMapNx + ix;
+      hW.SetBinContent(ix + 1, iz + 1, m.w[k]);
+      hWE.SetBinContent(ix + 1, iz + 1, m.emag[k]);
+    }
+    axZ.push_back(zLo + (iz + 0.5) * (zHi - zLo) / kMapNz);
+    axW.push_back(m.w[static_cast<std::size_t>(iz) * kMapNx + ixAxis]);
+  }
+
+  TGraph gAxisW(static_cast<int>(axZ.size()), axZ.data(), axW.data());
+  gAxisW.SetName("g_axis_wpot");
+  gAxisW.SetTitle("On-axis anode weighting potential;z [cm];W");
+
+  dir->cd();
+  hW.Write("h_wpot");
+  hWE.Write("h_wfield_mag");
+  gAxisW.Write("g_axis_wpot");
+  std::cout << "  Weighting map dumped (" << kMapNx << "×" << kMapNz
+            << " x–z slice, on-axis W profile).\n";
 }
 
 // Sample the neBEM field onto the grid nodes and write a ComponentGrid "xyz"
@@ -963,6 +1068,24 @@ std::string DeriveFieldCacheName(const GeometryConfig& g, const FieldConfig& f) 
      << "_Ei" << FileSafeNumber(f.eInductionKvcm)
      << "_g" << g.gridNx << "x" << g.gridNz
      << "_s" << g.holeSectors << "_pc" << g.periodicCopies << "_v2.txt";
+  return ss.str();
+}
+
+// Cache filename for the sampled anode weighting field.  Keyed by the geometry and
+// mesh *only* — a Shockley–Ramo weighting field depends on the electrode shapes, not
+// on the applied voltages — so an entire ΔV / E-field scan reuses a single solve.
+std::string DeriveWeightingCacheName(const GeometryConfig& g) {
+  auto I = [](double v) {
+    return std::to_string(static_cast<long long>(std::llround(v)));
+  };
+  std::ostringstream ss;
+  ss << "thgem_wpot_h" << I(g.holeDiameterUm) << "_p" << I(g.holePitchUm)
+     << "_t" << I(g.plateThicknessUm) << "_c" << I(g.copperThicknessUm)
+     << "_dg" << FileSafeNumber(g.driftGapMm) << "_ig" << FileSafeNumber(g.inductionGapMm)
+     << "_" << g.dielectric
+     << "_m" << kMapNx << "x" << kMapNz
+     << "_e" << I(g.targetElementSizeUm) << "_n" << g.minElements << "-" << g.maxElements
+     << "_s" << g.holeSectors << "_pc" << g.periodicCopies << "_v1.txt";
   return ss.str();
 }
 
@@ -1725,6 +1848,10 @@ int main(int argc, char* argv[]) {
     EnsureDirectory("field_cache");
     const std::string fieldCache =
         (fs::path("field_cache") / DeriveFieldCacheName(cfg.geometry, cfg.fields)).string();
+    // The weighting map is keyed by geometry alone (it does not depend on the applied
+    // voltages), so a whole ΔV scan reuses one solve.
+    const std::string wpotCache =
+        (fs::path("field_cache") / DeriveWeightingCacheName(cfg.geometry)).string();
     const std::size_t expectNodes = static_cast<std::size_t>(cfg.geometry.gridNx) *
                                     cfg.geometry.gridNx * cfg.geometry.gridNz;
     auto tField = Clock::now();
@@ -1743,21 +1870,54 @@ int main(int argc, char* argv[]) {
         fs::remove(fieldCache, ec);
       }
     }
-    if (!haveField) {
-      std::cout << "\nSolving THGEM field with neBEM and sampling the "
-                << cfg.geometry.gridNx << "×" << cfg.geometry.gridNx << "×"
-                << cfg.geometry.gridNz << " transport grid"
-                << " (one-time; cached to " << fieldCache << ")...\n";
+    WeightingMap wmap;
+    if (fs::exists(wpotCache)) {
+      wmap = LoadWeightingMap(wpotCache);
+      if (wmap.valid) {
+        std::cout << "Loading cached anode weighting field from: " << wpotCache << "\n";
+      } else {
+        std::cout << "  Cached weighting map is incomplete — deleting and regenerating.\n";
+        std::error_code ec;
+        fs::remove(wpotCache, ec);
+      }
+    }
+
+    // A single neBEM solve serves both maps, so initialise if *either* is missing.
+    // (On a pure cache hit neBEM is never initialised, which is why the weighting map
+    // needs its own cache rather than being queried on demand.)
+    if (!haveField || !wmap.valid) {
+      if (haveField) {
+        std::cout << "\nTransport field was cached but the anode weighting map is not — "
+                  << "solving neBEM once to build it (one-time; cached to "
+                  << wpotCache << ")...\n";
+      } else {
+        std::cout << "\nSolving THGEM field with neBEM and sampling the "
+                  << cfg.geometry.gridNx << "×" << cfg.geometry.gridNx << "×"
+                  << cfg.geometry.gridNz << " transport grid"
+                  << " (one-time; cached to " << fieldCache << ")...\n";
+      }
       if (!detector.Initialise())
         throw std::runtime_error("neBEM Initialise() failed — try a coarser mesh "
                                  "(larger target_element_size_um / fewer periodic_copies).");
       std::cout << "  neBEM solved (" << detector.Component().GetNumberOfElements()
-                << " boundary elements). Sampling transport grid (be patient)...\n";
-      SampleFieldToFile(detector.Component(), detector, g, cfg.geometry, gxy, fieldCache);
-      if (!grid.LoadElectricField(fieldCache, "xyz",
-                                  /*withPotential=*/true, /*withFlag=*/true))
-        throw std::runtime_error("Failed to load freshly sampled transport field: "
-                                 + fieldCache);
+                << " boundary elements).\n";
+      if (!haveField) {
+        std::cout << "  Sampling transport grid (be patient)...\n";
+        SampleFieldToFile(detector.Component(), detector, g, cfg.geometry, gxy, fieldCache);
+        if (!grid.LoadElectricField(fieldCache, "xyz",
+                                    /*withPotential=*/true, /*withFlag=*/true))
+          throw std::runtime_error("Failed to load freshly sampled transport field: "
+                                   + fieldCache);
+      }
+      if (!wmap.valid) {
+        std::cout << "  Sampling anode weighting field (" << kMapNx << "×" << kMapNz
+                  << " x–z slice)...\n";
+        SampleWeightingToFile(detector.Component(), g, wpotCache);
+        wmap = LoadWeightingMap(wpotCache);
+        if (!wmap.valid)
+          std::cout << "  Warning: weighting map sample did not read back cleanly; "
+                       "the Weighting Field view will be empty.\n";
+      }
     }
     grid.SetMedium(&gas);   // must follow SetMesh(): SetMesh() calls Reset().
     std::cout << "  [timing] transport field: "
@@ -1779,6 +1939,7 @@ int main(int argc, char* argv[]) {
     TDirectory* fieldDir   = rootFile.mkdir("field");
     auto tDump = Clock::now();
     DumpFieldMap(grid, g, fieldDir);
+    DumpWeightingMap(wmap, g, fieldDir);
     std::cout << "  [timing] field-map dump: " << FormatNumber(secsSince(tDump), 1) << " s\n";
 
     std::vector<DistanceSummary> allSummaries;
