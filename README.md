@@ -12,7 +12,9 @@ field engine was rebuilt — a wire chamber has an analytic field, a hole multip
 
 > **Status:** working and verified end-to-end — field solve, multiplying avalanche (realistic
 > gain), bounded ion drift, and the GUI. A ΔV≈1400 V run on the hole axis multiplies to ⟨~10³⟩
-> electrons and induces a non-zero anode charge in a few seconds.
+> electrons and induces a non-zero anode charge in a few seconds. The GUI's **3D Tracks** view
+> renders the detector geometry and the full avalanche — the primary plus the secondary electrons'
+> transport through the hole.
 
 ---
 
@@ -28,6 +30,9 @@ field engine was rebuilt — a wire chamber has an analytic field, a hole multip
    │              └──────────────────────────────────┘  anode pad       (0 V, readout)
                    |←────────── pitch 800 µm ────────→|
 ```
+
+*(Dimensions above are the `standard` config; the shipped `default_thgem.json` uses a 5 mm drift gap
+and 1000 µm pitch.)*
 
 Electrons drift along **−z** toward the most-positive anode. The configuration is given in physics
 terms (`e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm`) and the four electrode potentials are
@@ -66,6 +71,26 @@ here. Instead:
 
 The solved field is also dumped to the run's ROOT file (`field/`) as an x–z slice through the hole
 centre plus an on-axis profile, which is what the GUI's **E-Field** tab renders.
+
+## 3D Tracks view
+
+The GUI's **3D Tracks** tab renders one event in a ROOT 3D canvas, in true z-scale:
+
+- **Geometry** — an N×N block of hole cylinders (orange), the copper/dielectric plate faces (grey),
+  and the drift (cyan) and anode (red) equipotential planes.
+- **Charges** — the primary electron's drift line (blue); the avalanche both as orange birth-point
+  markers *and* as semi-transparent orange **transport trajectories** of the secondary electrons;
+  and, when ion drift is enabled, the ion paths colour-coded by destination — green (→ drift
+  cathode), magenta (→ anode), grey (absorbed).
+- **Controls** — Distance / X-pos / Event selectors; orientation presets (`Gap XY`, `Top XZ`,
+  `Side YZ`, `3D`) with zoom and pan; a **Holes** spinbox (1–15, default 4 → a 4×4 block); and an
+  **Aval paths** spinbox (0–200, default 50) capping how many avalanche trajectories are drawn
+  (0 hides them).
+
+The curved primary line and the avalanche trajectories require **`store_drift_lines`** (on in the
+default config); with it off, the primary is a straight start→end segment and only the birth-point
+cloud is shown. The avalanche trajectories are stored subsampled and capped (≤200 per event), so the
+ROOT file stays small.
 
 ## Layout
 
@@ -114,7 +139,19 @@ python3 gui/app.py
 
 `thgem_sim` writes `thgem_sim.root`, `summary.csv` and a resolved `run_config.json` into a
 timestamped subdirectory of `--out`. The GUI runs the same binary and loads those outputs into its
-Summary / Plots / Waveforms / Integrals / 3D-Tracks / E-Field / Magboltz tabs.
+Summary / Plots / Waveforms / Integrals / [3D Tracks](#3d-tracks-view) / E-Field / Magboltz tabs.
+
+Each run also prints a **primary-electron fate** line per source height, e.g.
+
+```
+  [fate] multiplied 25/30 events; primary endpoint: {attached @ in-hole: 6} {outside time window @ below-plate: 24}
+```
+
+`multiplied N/M` is how many events produced an avalanche; the `{status @ zone}` tally shows where
+and why each primary ended (`zone` ∈ `in-hole` / `on-plate` / `in-gap` / `below-plate`). It is a
+collection-efficiency and attachment readout: at the default ΔV≈1400 V about **85 %** of electrons
+multiply, and the rest either **attach** in the hole (CO₂) or are collected on the copper — so a
+single-event run is statistical and may show no avalanche. That is expected physics, not a bug.
 
 ## Configuration
 
