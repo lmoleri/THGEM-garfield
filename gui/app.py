@@ -474,8 +474,9 @@ class ConfigPanel(QScrollArea):
         self.store_drift_lines.setChecked(False)
         self.store_drift_lines.setToolTip(
             "Store intermediate drift-line steps for the 3D track view.\n"
-            "Off: primary electron shown as straight start→end line.\n"
-            "On: full curved trajectory, but adds ~15 % CPU time per event."
+            "Off: primary electron shown as straight start→end line, no avalanche paths.\n"
+            "On: full curved primary + avalanche-electron trajectories, "
+            "but adds ~15 % CPU time per event."
         )
         self.ion_max_step = self._dspin(0.0, 100.0, 1.0, 1, 5.0)
         self.ion_max_step.setToolTip(
@@ -867,6 +868,7 @@ class ResultsPanel(QTabWidget):
         self._trk_pan_y:      float = 0.0   # cm offset of Y visible centre
         self._trk_pan_z:      float = 0.0   # cm offset of Z visible centre
         self._trk_n_holes:    int   = 4     # N×N block of holes drawn in the 3D view
+        self._trk_n_aval_paths: int = 50    # avalanche e⁻ drift lines drawn (0 = hide)
         self._efield_cache: dict | None = None   # {x, y, Ex, Ey} computed arrays
         self._efield_root_canvas  = None   # ROOT TCanvas for E-field maps
         self._efield_objects: list = []
@@ -1082,6 +1084,18 @@ class ResultsPanel(QTabWidget):
             "The simulated hole sits at the centre; this is display-only.")
         self.trk_holes_spin.valueChanged.connect(self._on_trk_holes_changed)
         trk_ctrl_h.addWidget(self.trk_holes_spin)
+
+        trk_ctrl_h.addSpacing(10)
+        trk_ctrl_h.addWidget(QLabel("Aval paths:"))
+        self.trk_aval_spin = QSpinBox()
+        self.trk_aval_spin.setRange(0, 200)
+        self.trk_aval_spin.setValue(self._trk_n_aval_paths)
+        self.trk_aval_spin.setMaximumWidth(58)
+        self.trk_aval_spin.setToolTip(
+            "Number of avalanche-electron drift lines drawn in the 3D view (0 hides them).\n"
+            "Requires a run with 'Store drift lines' enabled.")
+        self.trk_aval_spin.valueChanged.connect(self._on_trk_n_aval_changed)
+        trk_ctrl_h.addWidget(self.trk_aval_spin)
 
         trk_ctrl_h.addStretch()
         tracks_layout.addWidget(trk_ctrl_row)
@@ -2127,6 +2141,15 @@ class ResultsPanel(QTabWidget):
                             "ion_z":     tree["ion_z"].array(library="np"),
                             "ion_npts":  tree["ion_npts"].array(library="np"),
                         }
+                        # Avalanche-electron drift lines (added later; older ROOT
+                        # files lack them → fall back to empty per-event arrays).
+                        n_ev = len(data_dict["primary_x"])
+                        if "aval_x" in tree.keys():
+                            for br in ("aval_x", "aval_y", "aval_z", "aval_npts"):
+                                data_dict[br] = tree[br].array(library="np")
+                        else:
+                            for br in ("aval_x", "aval_y", "aval_z", "aval_npts"):
+                                data_dict[br] = [np.empty(0) for _ in range(n_ev)]
                         self._track_data.setdefault(dist_label, {})[xpos_label] = data_dict
                     except Exception as exc:  # noqa: BLE001
                         self.append_log(f"[GUI] Track load error for {key}: {exc}")
@@ -2370,6 +2393,25 @@ class ResultsPanel(QTabWidget):
                 mrk.Draw("SAME")
                 self._tracks_objects.append(mrk)
 
+            # ── Avalanche-electron transport (orange drift lines) ─────────────
+            # Draw the first self._trk_n_aval_paths stored secondary drift lines so
+            # the cascade's transport through the hole to the anode is visible.
+            av_x = np.asarray(data["aval_x"][ev])
+            av_y = np.asarray(data["aval_y"][ev])
+            av_z = np.asarray(data["aval_z"][ev])
+            av_np = np.asarray(data["aval_npts"][ev])
+            n_draw = min(int(self._trk_n_aval_paths), len(av_np))
+            off = 0
+            for k in range(len(av_np)):
+                n_seg = int(av_np[k])
+                if k < n_draw and n_seg >= 2:
+                    xs = av_x[off:off + n_seg]
+                    ys = av_y[off:off + n_seg]
+                    zs = av_z[off:off + n_seg]
+                    for _seg in _clip(xs, ys, zs):
+                        _pl3(*_seg, ROOT.kOrange + 1, 1, alpha=0.40)
+                off += n_seg
+
             # ── Ion drift paths (colour-coded by destination) ─────────────────
             ion_x = np.asarray(data["ion_x"][ev])
             ion_y = np.asarray(data["ion_y"][ev])
@@ -2419,8 +2461,9 @@ class ResultsPanel(QTabWidget):
                 return mk
 
             _leg_proxies = [
-                (_mk_line(ROOT.kBlue + 1, 2),  "Primary e^{-}",          "L"),
-                (_mk_marker(ROOT.kOrange + 1), "Avalanche",               "P"),
+                (_mk_line(ROOT.kBlue + 1, 2),  "Primary e^{-}",           "L"),
+                (_mk_marker(ROOT.kOrange + 1), "Avalanche e^{-} (birth)", "P"),
+                (_mk_line(ROOT.kOrange + 1),   "Avalanche e^{-} (path)",  "L"),
                 (_mk_line(ROOT.kGreen + 2),    "Ion #rightarrow drift",   "L"),
                 (_mk_line(ROOT.kMagenta),      "Ion #rightarrow anode",   "L"),
                 (_mk_line(ROOT.kGray + 1),     "Ion (absorbed)",          "L"),
@@ -2428,7 +2471,7 @@ class ResultsPanel(QTabWidget):
                 (_mk_line(ROOT.kCyan - 7, 2),  "Drift plane",             "L"),
                 (_mk_line(ROOT.kRed - 7, 2),   "Anode plane",             "L"),
             ]
-            leg = ROOT.TLegend(0.70, 0.60, 0.99, 0.97)
+            leg = ROOT.TLegend(0.70, 0.56, 0.99, 0.97)
             leg.SetBorderSize(0)
             leg.SetFillColorAlpha(ROOT.kWhite, 0.75)
             leg.SetTextSize(0.024)
@@ -2451,6 +2494,11 @@ class ResultsPanel(QTabWidget):
     def _on_trk_holes_changed(self, value: int) -> None:
         """Redraw with an N×N block of holes (display-only)."""
         self._trk_n_holes = int(value)
+        self._update_track_plot()
+
+    def _on_trk_n_aval_changed(self, value: int) -> None:
+        """Redraw with the given number of avalanche-electron drift lines."""
+        self._trk_n_aval_paths = int(value)
         self._update_track_plot()
 
     def _trk_pan(self, axis: str, direction: int) -> None:

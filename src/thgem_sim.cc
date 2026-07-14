@@ -190,8 +190,9 @@ struct SimulationConfig {
 };
 
 // ─── 3D-visualisation display limits ─────────────────────────────────────────
-constexpr std::size_t kMaxDispIonPaths = 100;  // ion drift paths saved per event
-constexpr std::size_t kMaxDispCloudPts = 500;  // avalanche-cloud points saved per event
+constexpr std::size_t kMaxDispIonPaths      = 100;  // ion drift paths saved per event
+constexpr std::size_t kMaxDispCloudPts      = 500;  // avalanche-cloud points saved per event
+constexpr std::size_t kMaxDispElectronPaths = 200;  // avalanche e⁻ drift lines saved per event
 
 // The transport grid spans exactly one unit cell in x/y (half-width = pitch/2)
 // and is tiled with mirror periodicity, so charges diffusing past a cell edge
@@ -1104,6 +1105,8 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // ── 3D track branches ────────────────────────────────────────────────────────
   std::vector<float> primaryX, primaryY, primaryZ;
   std::vector<float> cloudX,   cloudY,   cloudZ;
+  std::vector<float> avalX,    avalY,    avalZ;
+  std::vector<int>   avalNpts;
   std::vector<float> ionX,     ionY,     ionZ;
   std::vector<int>   ionNpts;
   signalTree.Branch("primary_x", &primaryX);
@@ -1112,10 +1115,20 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   signalTree.Branch("cloud_x",   &cloudX);
   signalTree.Branch("cloud_y",   &cloudY);
   signalTree.Branch("cloud_z",   &cloudZ);
+  signalTree.Branch("aval_x",    &avalX);
+  signalTree.Branch("aval_y",    &avalY);
+  signalTree.Branch("aval_z",    &avalZ);
+  signalTree.Branch("aval_npts", &avalNpts);
   signalTree.Branch("ion_x",     &ionX);
   signalTree.Branch("ion_y",     &ionY);
   signalTree.Branch("ion_z",     &ionZ);
   signalTree.Branch("ion_npts",  &ionNpts);
+  // The avalanche drift-line branches can reach hundreds of kB per event.  With the
+  // default 32 kB basket they spill into several baskets, and uproot (used by the GUI)
+  // mis-parses the multi-basket TObjArrayOfTBaskets that ROOT then embeds in the TTree.
+  // A large basket keeps each branch in a single basket, which uproot reads fine (as
+  // it already does for the small primary/cloud branches).
+  signalTree.SetBasketSize("*", 24 * 1024 * 1024);
 
   // ── Transport objects ────────────────────────────────────────────────────────
   const int nPrimary = std::max(1,
@@ -1241,6 +1254,42 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
         cloudX.push_back(static_cast<float>(x0c));
         cloudY.push_back(static_cast<float>(y0c));
         cloudZ.push_back(static_cast<float>(z0c));
+      }
+    }
+
+    // Avalanche-electron transport: full drift lines of a strided, capped sample of
+    // the secondary electrons (requires store_drift_lines; otherwise these are just
+    // endpoints, like the primary line above).  Stored as concatenated points with a
+    // per-track length list, exactly like the ion paths, for the 3D transport view.
+    avalX.clear(); avalY.clear(); avalZ.clear(); avalNpts.clear();
+    {
+      const std::size_t nSec   = nEp > 0 ? nEp - 1 : 0;
+      const std::size_t stride = (nSec > kMaxDispElectronPaths && kMaxDispElectronPaths > 0)
+                                  ? nSec / kMaxDispElectronPaths : 1;
+      constexpr std::size_t kMaxPtsPerPath = 64;   // subsample: smooth line, small file
+      for (std::size_t i = 1; i < nEp; i += stride) {
+        const std::size_t nPts = aval.GetNumberOfElectronDriftLinePoints(i);
+        if (nPts == 0) { avalNpts.push_back(0); continue; }
+        const std::size_t pStride = std::max<std::size_t>(1, nPts / kMaxPtsPerPath);
+        int written = 0;
+        for (std::size_t ip = 0; ip < nPts; ip += pStride) {
+          double ax, ay, az, at;
+          aval.GetElectronDriftLinePoint(ax, ay, az, at, ip, i);
+          avalX.push_back(static_cast<float>(ax));
+          avalY.push_back(static_cast<float>(ay));
+          avalZ.push_back(static_cast<float>(az));
+          ++written;
+        }
+        // Always include the true endpoint so the line reaches its collection point.
+        if ((nPts - 1) % pStride != 0) {
+          double ax, ay, az, at;
+          aval.GetElectronDriftLinePoint(ax, ay, az, at, nPts - 1, i);
+          avalX.push_back(static_cast<float>(ax));
+          avalY.push_back(static_cast<float>(ay));
+          avalZ.push_back(static_cast<float>(az));
+          ++written;
+        }
+        avalNpts.push_back(written);
       }
     }
 
