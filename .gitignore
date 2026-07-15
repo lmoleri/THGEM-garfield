@@ -8,8 +8,10 @@ cmake-build-*/
 # neBEM working directory (regenerated on every solve)
 neBEMOut/
 
-# neBEM → ComponentGrid sampled-field cache (one ~7 MB file per geometry/field point,
-# regenerated automatically when missing)
+# neBEM → ComponentGrid sampled-field cache (one ~5-10 MB file per geometry/field point,
+# regenerated automatically when missing). The caches for the bundled configs
+# (default_thgem.json + smoke_thgem.json) are force-committed so a fresh clone runs
+# out-of-the-box; any other/ad-hoc solve lands here and stays ignored.
 field_cache/
 
 # Magboltz property sidecar (rewritten on every run; lives next to the .gas in gas/)

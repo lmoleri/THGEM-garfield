@@ -31,8 +31,8 @@ field engine was rebuilt — a wire chamber has an analytic field, a hole multip
                    |←────────── pitch 800 µm ────────→|
 ```
 
-*(Dimensions above are the `standard` config; the shipped `default_thgem.json` uses a 5 mm drift gap
-and 1000 µm pitch.)*
+*(Dimensions above are illustrative — the fast `smoke_thgem.json` uses this 800 µm pitch and 3 mm
+drift gap; the baseline `default_thgem.json` uses a 5 mm drift gap and 1000 µm pitch.)*
 
 Electrons drift along **−z** toward the most-positive anode. The configuration is given in physics
 terms (`e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm`) and the four electrode potentials are
@@ -54,7 +54,7 @@ here. Instead:
    (`SolidBox` drift cathode + anode, `SolidHole` top-Cu / dielectric / bottom-Cu inside a
    `GeometrySimple`), tiled with mirror periodicity in x and y. The drift cathode and anode are
    one-cell patches that only *approximate* an infinite plane once tiled, so **`periodic_copies`
-   must be large enough** (≥7 for the standard geometry, ≥9 for the larger default) — with too few
+   must be large enough** (≥7 for the 800 µm-pitch / 3 mm-gap geometry, ≥9 for the larger default) — with too few
    copies the truncated periodic sum leaves the on-axis drift field *reversed* mid-gap, which traps
    drifting charges. `neBEM`'s `AddPlaneZ` is **not** a substitute: it does not enforce a plane
    boundary condition under a periodic solve.
@@ -65,11 +65,11 @@ here. Instead:
 3. The sampler writes an **in-solid flag** per node, so `ComponentGrid::GetMedium` returns `null`
    inside the copper and dielectric and electrons are absorbed on contact. Without this a
    `ComponentGrid` has no material information and charges would drift straight through metal.
-4. The anode's Shockley–Ramo weighting field used for the **signal** is supplied analytically by a
-   `ComponentUser` (parallel-plate model over the induction gap, screened above the bottom copper)
-   rather than a second neBEM solve. neBEM *also* solves the electrode's **true** weighting field
-   (the anode solid is labelled, so 1 V is placed on it and 0 V on all others); that map is dumped
-   for the Weighting Field tab and is what validates the analytic stand-in — see below.
+4. The **signal** on each of the three readout electrodes — the anode pad and the two THGEM copper
+   faces — comes from that electrode's **true Shockley–Ramo weighting field _and potential_, solved by
+   neBEM** (each solid is labelled, so 1 V is placed on it and 0 V on all others) and sampled onto the
+   same grid. The induced charge is integrated from the weighting *potential* (`q·ΔW`, smooth on the
+   grid); those maps are also what the Weighting Field tab draws — see below.
 
 The solved field is also dumped to the run's ROOT file (`field/`) as an x–z slice through the hole
 centre plus an on-axis profile, which is what the GUI's **E-Field** tab renders.
@@ -85,17 +85,20 @@ across x to show the detector as an array of holes — an exact repeat, not an i
 live in the GUI with no re-run.
 
 - **E-Field** — `|E|`, the potential, or the signed `Ez` / `Ex` components, from the neBEM solve.
-- **Weighting Field** — the anode's **true** Shockley–Ramo weighting potential `W` (or `|E_w|`),
-  solved by neBEM. It is cached separately from the transport field and keyed on the **geometry
-  only** — a weighting field does not depend on the applied voltages, so a whole ΔV scan reuses a
-  single solve. (Because a cached transport field means neBEM is never initialised, the weighting map
-  needs its own cache; the first run on a given geometry solves once to build it.)
+- **Weighting Field** — each readout electrode's **true** Shockley–Ramo weighting potential `W` (or
+  `|E_w|`), solved by neBEM. An **Electrode** selector switches between the anode, the THGEM top
+  copper and the bottom copper, and an **"all electrodes"** view overlays the three on-axis `W(z)`
+  profiles in one pad. Each map is cached separately from the transport field and keyed on the
+  **geometry only** — a weighting field does not depend on the applied voltages, so a whole ΔV scan
+  reuses a single solve. (Because a cached transport field means neBEM is never initialised, the
+  weighting maps need their own cache; the first run on a given geometry solves once to build them.)
 
-The weighting map is the honest check on the analytic stand-in used for the signal. The stand-in
-assumes the bottom copper screens perfectly (`W = 0` above it), whereas the hole is an open window:
-neBEM gives `W ≲ 3 %` just above the bottom copper and ~1 % inside the hole. An avalanche electron
-born in the hole and collected at the anode therefore induces `ΔW ≈ 0.99` instead of `1.00` — a **~1 %
-error on `Q_anode`**, so the parallel-plate stand-in is a good approximation and the signal stands.
+The overlay makes the readout physics legible: the anode potential ramps `1 → 0` across the induction
+gap, `thgem_top` peaks near the top copper (`+z`) and `thgem_bottom` near the bottom copper (`−z`), so
+each electrode's weighting potential peaks at its own location — the direct check that the three
+signals are not swapped. An avalanche electron collected at the anode induces `ΔW ≈ 1` there (neBEM
+gives `W ≲ 3 %` just above the bottom copper and ~1 % inside the hole), a unipolar collection pulse,
+while the copper faces see the bipolar `ΔW` of charge transiting the hole.
 
 ## 3D Tracks view
 
@@ -126,16 +129,19 @@ ROOT file stays small.
 │   ├── default_thgem.json  baseline configuration
 │   └── smoke_thgem.json    fast, coarse-mesh smoke test (used by CTest)
 ├── gas/                    Magboltz gas tables (*.gas) + *_props.csv sidecars
-├── field_cache/            sampled neBEM field caches (generated, gitignored)
+├── field_cache/            neBEM field/weighting caches (bundled configs committed; other solves ignored)
 ├── third_party/nlohmann/   vendored single-header JSON library
 └── CMakeLists.txt
 ```
 
 `gas/*.gas` is a cached Magboltz transport table (a function of the gas + field grid only, not the
-detector geometry); one is committed so a fresh clone can run the default configuration without an
-hours-long regeneration. The `_props.csv` sidecar, `field_cache/`, build output, `results/` and
-`neBEMOut/` are generated and gitignored. These data folders live next to wherever the binary is
-run from — the GUI runs it from the project root, so they appear here.
+detector geometry); one is committed so a fresh clone can run the bundled configurations without an
+hours-long regeneration. Likewise the sampled neBEM field + weighting caches for the bundled configs
+(`default_thgem.json`, `smoke_thgem.json`) are committed under `field_cache/`, so those run
+out-of-the-box with no solve. The `_props.csv` sidecar (rewritten every run), any *other*
+`field_cache/` solve, build output, `results/`, `neBEMOut/` and `*.root` are generated and gitignored.
+These data folders live next to wherever the binary is run from — the GUI runs it from the project
+root, so they appear here.
 
 ## Build
 
