@@ -859,8 +859,16 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
             nx, xLo, xHi, nz, zLo, zHi);
   TH2D hPot("h_potential", "THGEM potential through hole centre;x [cm];z [cm]",
             nx, xLo, xHi, nz, zLo, zHi);
+  // Signed field components on the y = 0 slice (Ey ≈ 0 there by symmetry): Ez drives
+  // the drift/multiplication; Ex is the sideways focusing toward the hole.
+  TH2D hEz("h_field_ez", "THGEM E_{z} through hole centre;x [cm];z [cm]",
+           nx, xLo, xHi, nz, zLo, zHi);
+  TH2D hEx("h_field_ex", "THGEM E_{x} through hole centre;x [cm];z [cm]",
+           nx, xLo, xHi, nz, zLo, zHi);
   hMag.SetDirectory(nullptr);
   hPot.SetDirectory(nullptr);
+  hEz.SetDirectory(nullptr);
+  hEx.SetDirectory(nullptr);
 
   std::vector<double> axZ, axE, axV;
   axZ.reserve(nz); axE.reserve(nz); axV.reserve(nz);
@@ -876,6 +884,8 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
       const double emag = std::sqrt(ex * ex + ey * ey + ez * ez) / 1000.0;  // kV/cm
       hMag.SetBinContent(ix + 1, iz + 1, emag);
       hPot.SetBinContent(ix + 1, iz + 1, v);
+      hEz.SetBinContent(ix + 1, iz + 1, ez / 1000.0);   // kV/cm, signed
+      hEx.SetBinContent(ix + 1, iz + 1, ex / 1000.0);
     }
     // On-axis profile (x = y = 0).
     double ex = 0, ey = 0, ez = 0, v = 0; int status = 0;
@@ -896,6 +906,8 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
   dir->cd();
   hMag.Write("h_field_mag");
   hPot.Write("h_potential");
+  hEz.Write("h_field_ez");
+  hEx.Write("h_field_ex");
   gAxisE.Write("g_axis_field");
   gAxisV.Write("g_axis_potential");
   std::cout << "  Field map dumped (" << nx << "×" << nz << " x–z slice, "

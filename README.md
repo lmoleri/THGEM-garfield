@@ -84,7 +84,7 @@ solves and dumps a single periodic cell, and the field is exactly periodic, so t
 across x to show the detector as an array of holes — an exact repeat, not an interpolation, done
 live in the GUI with no re-run.
 
-- **E-Field** — `|E|` or the potential, from the neBEM solve.
+- **E-Field** — `|E|`, the potential, or the signed `Ez` / `Ex` components, from the neBEM solve.
 - **Weighting Field** — the anode's **true** Shockley–Ramo weighting potential `W` (or `|E_w|`),
   solved by neBEM. It is cached separately from the transport field and keyed on the **geometry
   only** — a weighting field does not depend on the applied voltages, so a whole ΔV scan reuses a

@@ -1158,7 +1158,7 @@ class ResultsPanel(QTabWidget):
         ef_h.setContentsMargins(0, 0, 0, 0)
         ef_h.addWidget(QLabel("Quantity:"))
         self.ef_quantity = QComboBox()
-        self.ef_quantity.addItems(["|E| [kV/cm]", "Potential [V]"])
+        self.ef_quantity.addItems(["|E| [kV/cm]", "Potential [V]", "Ez [kV/cm]", "Ex [kV/cm]"])
         self.ef_quantity.currentIndexChanged.connect(self._redraw_thgem_field)
         ef_h.addWidget(self.ef_quantity)
         ef_h.addSpacing(12)
@@ -2625,6 +2625,8 @@ class ResultsPanel(QTabWidget):
         try:
             hmag = f.Get("field/h_field_mag")
             hpot = f.Get("field/h_potential")
+            hez  = f.Get("field/h_field_ez")   # signed components (older files lack these)
+            hex_ = f.Get("field/h_field_ex")
             gE   = f.Get("field/g_axis_field")
             gV   = f.Get("field/g_axis_potential")
             if not hmag:
@@ -2632,6 +2634,8 @@ class ResultsPanel(QTabWidget):
             self._thgem_field = dict(
                 mag=self._clone_root(hmag),
                 pot=self._clone_root(hpot) if hpot else None,
+                ez=self._clone_root(hez) if hez else None,
+                ex=self._clone_root(hex_) if hex_ else None,
                 axE=self._clone_root(gE) if gE else None,
                 axV=self._clone_root(gV) if gV else None)
         finally:
@@ -2809,13 +2813,33 @@ class ResultsPanel(QTabWidget):
                         lines.append(ln)
         return lines
 
+    def _axis_profile(self, h2, name, ytitle):
+        """On-hole-axis profile (the x = 0 column of the map) as a TGraph."""
+        import ROOT  # noqa: PLC0415
+        ib = h2.GetXaxis().FindBin(0.0)
+        n  = h2.GetNbinsY()
+        z  = np.empty(n, "f8"); y = np.empty(n, "f8")
+        for j in range(1, n + 1):
+            z[j - 1] = h2.GetYaxis().GetBinCenter(j)
+            y[j - 1] = h2.GetBinContent(ib, j)
+        g = ROOT.TGraph(n, z, y)
+        g.SetName(name)
+        g.SetTitle(f"On hole axis;z [cm];{ytitle}")
+        return g
+
     def _redraw_thgem_field(self):
         d = self._thgem_field
         if not d:
             return
-        want_pot = self.ef_quantity.currentIndex() == 1
-        h2   = d["pot"] if want_pot else d["mag"]
-        prof = d["axV"] if want_pot else d["axE"]
+        idx = self.ef_quantity.currentIndex()
+        if idx == 1:
+            h2, prof = d["pot"], d["axV"]
+        elif idx == 2 and d.get("ez"):
+            h2 = d["ez"]; prof = self._axis_profile(h2, "g_axis_ez", "E_{z} [kV/cm]")
+        elif idx == 3 and d.get("ex"):
+            h2 = d["ex"]; prof = self._axis_profile(h2, "g_axis_ex", "E_{x} [kV/cm]")
+        else:
+            h2, prof = d["mag"], d["axE"]
         try:
             self._draw_field_canvas(
                 "_efield_root_canvas", "thgem_efield", "THGEM E-Field",
