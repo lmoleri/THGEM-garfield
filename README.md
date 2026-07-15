@@ -189,12 +189,16 @@ single-event run is statistical and may show no avalanche. That is expected phys
 | `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift` (default off), `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
 
 Three electrodes are read out — the anode pad and the two THGEM copper faces (`anode`,
-`thgem_top`, `thgem_bottom`); the drift cathode is not. Each induced signal uses that electrode's
-**true neBEM weighting field**, sampled onto the transport grid and cached per geometry (one solve
-serves all three, reused across a ΔV scan). Physically the anode shows a unipolar collection pulse,
-the top copper a positive induced spike as the avalanche passes, and the bottom copper a bipolar
-signal as charge transits the hole. The Waveforms tab plots all three; the Weighting Field tab has an
-electrode selector. (First run on a new geometry adds a one-time weighting-sampling cost of a few
+`thgem_top`, `thgem_bottom`); the drift cathode is not. Each electrode's **true neBEM weighting
+field and potential** are sampled onto the transport grid and cached per geometry (one solve serves
+all three, reused across a ΔV scan); the induced signal is integrated from the weighting *potential*
+(Q per step = q·ΔW), which is smooth on the sampled mesh, so both the waveforms and their integrals
+are accurate for all three electrodes. Physically the anode shows a unipolar collection pulse, the
+top copper a positive induced spike as the avalanche passes, and the bottom copper a bipolar signal
+as charge transits the hole. The Waveforms tab plots all three; the Weighting Field tab has an
+electrode selector, including an **"all electrodes"** view overlaying the three on-axis weighting
+potentials — where it is directly visible that each peaks at its own electrode (anode ramps 0→1
+across the induction gap, `thgem_top` near +z, `thgem_bottom` near −z), i.e. not swapped. (First run on a new geometry adds a one-time weighting-sampling cost of a few
 minutes, then cached.)
 
 An optional **front-end amplifier** (`amplifier` config section: `enable`, `gain_db`,

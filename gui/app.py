@@ -1245,7 +1245,7 @@ class ResultsPanel(QTabWidget):
         wf_h.setContentsMargins(0, 0, 0, 0)
         wf_h.addWidget(QLabel("Electrode:"))
         self.wf_electrode = QComboBox()
-        self.wf_electrode.addItems(["anode", "thgem_top", "thgem_bottom"])
+        self.wf_electrode.addItems(["all electrodes", "anode", "thgem_top", "thgem_bottom"])
         self.wf_electrode.currentIndexChanged.connect(self._redraw_thgem_wfield)
         wf_h.addWidget(self.wf_electrode)
         wf_h.addSpacing(12)
@@ -2147,8 +2147,10 @@ class ResultsPanel(QTabWidget):
         series  = self._select_display_series(data, evt_idx)
         anode   = series["anode"]
         cathode = series["cathode"]
+        bottom  = series.get("bottom")
         mean_a  = series["mean_a"]
         mean_c  = series["mean_c"]
+        mean_b  = series.get("mean_b")
         nbins   = len(times)
         dt      = float(times[1] - times[0]) if nbins > 1 else 1.0
 
@@ -2158,6 +2160,8 @@ class ResultsPanel(QTabWidget):
         cathode_int =  np.cumsum(cathode) * dt
         mean_a_int  = -np.cumsum(mean_a) * dt
         mean_c_int  =  np.cumsum(mean_c) * dt
+        bottom_int  =  np.cumsum(bottom) * dt if bottom is not None else None
+        mean_b_int  =  np.cumsum(mean_b) * dt if mean_b is not None else None
 
         try:
             import ROOT  # noqa: PLC0415
@@ -2167,7 +2171,7 @@ class ResultsPanel(QTabWidget):
                 "_charge_canvas", "tgc_charges", "THGEM Integrals", 950, 700)
 
             self._charge_canvas.Clear()
-            self._charge_canvas.Divide(1, 2)
+            self._charge_canvas.Divide(1, 3)
             self._charge_objects.clear()
 
             def _draw_pad(pad_idx: int, y_evt: np.ndarray, y_mean: np.ndarray,
@@ -2194,8 +2198,10 @@ class ResultsPanel(QTabWidget):
                 leg.Draw()
                 self._charge_objects.extend([ga, gm, leg])
 
-            _draw_pad(1, anode_int,   mean_a_int, "Anode",   ROOT.kBlue + 1)
-            _draw_pad(2, cathode_int, mean_c_int, "Cathode", ROOT.kRed  + 1)
+            _draw_pad(1, anode_int,   mean_a_int, "Anode",        ROOT.kBlue + 1)
+            _draw_pad(2, cathode_int, mean_c_int, "THGEM top",    ROOT.kRed  + 1)
+            if bottom_int is not None:
+                _draw_pad(3, bottom_int, mean_b_int, "THGEM bottom", ROOT.kOrange + 7)
 
             self._charge_canvas.Update()
 
@@ -2921,6 +2927,9 @@ class ResultsPanel(QTabWidget):
         if not maps:
             return
         eid = self.wf_electrode.currentText()
+        if eid == "all electrodes":
+            self._draw_wfield_overlay(maps)
+            return
         d = maps.get(eid) or next(iter(maps.values()))   # fall back to any available
         want_mag = self.wf_quantity.currentIndex() == 1
         h2   = d["wmag"] if want_mag else d["wpot"]
@@ -2932,6 +2941,46 @@ class ResultsPanel(QTabWidget):
                 h2, prof, self.wf_cmap.currentText(), self._wfield_objects)
         except Exception as exc:  # noqa: BLE001
             self.append_log(f"[GUI] Weighting-field canvas error: {exc}")
+
+    def _draw_wfield_overlay(self, maps):
+        """Overlay the three electrodes' on-axis weighting potentials W(z) in one pad,
+        so each electrode's field is visibly distinct and correctly placed."""
+        import ROOT  # noqa: PLC0415
+        ROOT.gROOT.SetBatch(False)
+        canvas = self._ensure_canvas("_wfield_root_canvas", "thgem_wfield",
+                                     "THGEM Weighting Potentials", 1000, 620)
+        canvas.cd()
+        canvas.Clear()
+        self._wfield_objects.clear()
+        ROOT.gStyle.SetOptStat(0)
+        ROOT.gPad.SetGrid()
+        colours = [("anode", ROOT.kBlue + 1), ("thgem_top", ROOT.kRed + 1),
+                   ("thgem_bottom", ROOT.kOrange + 7)]
+        leg = ROOT.TLegend(0.68, 0.72, 0.99, 0.93)
+        leg.SetBorderSize(0)
+        frame = None
+        for eid, col in colours:
+            d = maps.get(eid)
+            if d is None or d.get("axW") is None:
+                continue
+            g = d["axW"].Clone()
+            try:
+                g.SetDirectory(0)
+            except AttributeError:
+                pass
+            g.SetLineColor(col)
+            g.SetLineWidth(2)
+            g.SetTitle("Anode-axis weighting potentials;z [cm];W")
+            g.Draw("AL" if frame is None else "L same")
+            if frame is None:
+                g.GetYaxis().SetRangeUser(-0.1, 1.05)
+                frame = g
+            leg.AddEntry(g, eid, "L")
+            self._wfield_objects.append(g)
+        leg.Draw()
+        self._wfield_objects.append(leg)
+        canvas.Modified()
+        canvas.Update()
 
 
 class MainWindow(QMainWindow):

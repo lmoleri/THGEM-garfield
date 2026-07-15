@@ -785,10 +785,9 @@ class ThgemDetector {
     geo_.AddSolid(botCu.get(), &cu_);
     solids_.push_back(std::move(botCu));
 
-    // Anode readout plate one induction gap below the plate.  The *signal* still
-    // uses the analytic ComponentUser weighting field (see SetupAnodeWeighting);
-    // the label lets neBEM additionally solve the true weighting field of this
-    // electrode (1 V here, 0 V on all others) for the Weighting Field view.
+    // Anode readout plate one induction gap below the plate.  Labelled so neBEM
+    // solves its true Shockley–Ramo weighting field (1 V here, 0 V on all others);
+    // that field's potential drives the anode signal, like the two copper electrodes.
     auto anode = std::make_unique<SolidBox>(0., 0., geom_.zAnode, hx, hy, 0.);
     anode->SetBoundaryPotential(geom_.vAnode);
     anode->SetLabel("anode");
@@ -1283,6 +1282,10 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   AvalancheMicroscopic aval(&sensor);
   if (sim.maxAvalancheSize > 0) aval.EnableAvalancheSizeLimit(sim.maxAvalancheSize);
   if (sim.storeDriftLines) aval.EnableDriftLines(true);
+  // Compute each electrode's induced signal from its neBEM weighting *potential*
+  // (Q per step = q·ΔW), not the weighting field: the potential is smooth on the
+  // sampled grid, so the signals and their integrals are accurate for all electrodes.
+  aval.UseWeightingPotential(true);
   // Bound the *transport* in time.  Sensor::SetTimeWindow only bins the induced signal;
   // without this an electron that drifts slowly (or stalls) is tracked indefinitely.
   // Charges still in flight at the end of the window end as StatusOutsideTimeWindow.
@@ -1298,6 +1301,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   if (sim.enableIonDrift) {
     ionDrift.emplace(&sensor);
     ionDrift->EnableDriftLines(true);   // populate EndPoint::path for the 3D view
+    ionDrift->UseWeightingPotential(true);   // signal from the weighting potential (as above)
     if (sim.ionMaxStepUm > 0.) ionDrift->SetDistanceSteps(sim.ionMaxStepUm * 1.e-4);
     ionDrift->SetTimeWindow(0., sim.ionTimeWindowNs);
     std::cout << "  Ion drift: AvalancheMC, " << sim.ionMaxStepUm
