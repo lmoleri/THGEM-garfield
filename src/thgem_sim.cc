@@ -1088,7 +1088,7 @@ std::string DeriveWeightingCacheName(const GeometryConfig& g, const std::string&
 // copper), each holding that electrode's neBEM weighting field sampled onto the grid.
 void SetupSensor(Sensor& sensor, ComponentGrid& grid,
                  std::array<ComponentGrid, 3>& wgrids,
-                 const ThgemGeom& g, const SimulationConfig& sim) {
+                 const ThgemGeom& g, const SimulationConfig& sim, int gridNz) {
   sensor.AddComponent(&grid);            // transport field + drift medium
   for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
     sensor.AddElectrode(&wgrids[e], kReadoutIds[e]);
@@ -1102,8 +1102,19 @@ void SetupSensor(Sensor& sensor, ComponentGrid& grid,
   // z to the drift cathode → anode span: charges are collected when they leave in
   // z.  Several pitches of lateral room let the avalanche/diffusion spread, as in
   // the Garfield GEM examples.
-  const double xy = 3.0 * g.pitchCm;
-  sensor.SetArea(-xy, -xy, g.zAnode, xy, xy, g.zDrift);
+  //
+  // Inset the z-bounds by one transport-grid cell so an electron is collected the
+  // moment it reaches the last cell in front of the anode (or drift cathode).  With
+  // zmin exactly at zAnode the trilinear field in that final cell is too weak to
+  // push the electron across the boundary, so it would otherwise hover ~one cell
+  // above the anode and diffuse sideways along it for the whole time window —
+  // producing spurious "anode-slide" drift lines (and StatusOutsideTimeWindow
+  // fates) instead of a clean collection.  AvalancheMicroscopic stops an electron
+  // when a step lands outside the area (StatusLeftDriftArea); raising zmin a cell
+  // makes the anode (and, symmetrically, the drift cathode) absorb on contact.
+  const double xy      = 3.0 * g.pitchCm;
+  const double zMargin = (g.zDrift - g.zAnode) / std::max(1, gridNz - 1);
+  sensor.SetArea(-xy, -xy, g.zAnode + zMargin, xy, xy, g.zDrift - zMargin);
 }
 
 // ─── Front-end amplifier (ported from tgc_sim) ────────────────────────────────
@@ -1995,7 +2006,7 @@ int main(int argc, char* argv[]) {
               << FormatNumber(secsSince(tField), 1) << " s\n";
 
     Sensor sensor;
-    SetupSensor(sensor, grid, wgrids, g, cfg.simulation);
+    SetupSensor(sensor, grid, wgrids, g, cfg.simulation, cfg.geometry.gridNz);
 
     // ROOT output.
     TFile rootFile((runDir / "thgem_sim.root").string().c_str(), "RECREATE");
