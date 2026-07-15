@@ -523,8 +523,6 @@ Config LoadConfig(const fs::path& path) {
   if (gm.plateThicknessUm  <= 0.) throw std::runtime_error("geometry.plate_thickness_um must be positive");
   if (gm.copperThicknessUm <  0.) throw std::runtime_error("geometry.copper_thickness_um must be >= 0");
   if (gm.rimUm             <  0.) throw std::runtime_error("geometry.rim_um must be >= 0");
-  if (gm.rimUm             >  0.)
-    throw std::runtime_error("geometry.rim_um > 0 (etched rim) is not supported yet; set 0");
   if (gm.driftGapMm        <= 0.) throw std::runtime_error("geometry.drift_gap_mm must be positive");
   if (gm.inductionGapMm    <= 0.) throw std::runtime_error("geometry.induction_gap_mm must be positive");
   if (gm.dielectric != "fr4" && gm.dielectric != "kapton")
@@ -701,7 +699,8 @@ std::string SetupGas(MediumMagboltz& gas, const GasConfig& cfg,
 
 // Computed cell dimensions [cm] and derived electrode potentials [V].
 struct ThgemGeom {
-  double rHoleCm    = 0.;
+  double rHoleCm    = 0.;   // dielectric hole radius
+  double rimCm      = 0.;   // copper etched back this far → copper hole = rHole + rim
   double pitchCm    = 0.;   // full cell size (square)
   double tDielCm    = 0.;
   double tCuCm      = 0.;
@@ -737,10 +736,13 @@ class ThgemDetector {
     geo_.AddSolid(drift.get(), &cu_);
     solids_.push_back(std::move(drift));
 
+    // Copper is etched back from the dielectric hole edge by the rim, so the copper
+    // openings are wider than the dielectric hole.
+    const double rCu = geom_.rHoleCm + geom_.rimCm;
     // Top copper cladding (box with hole), sitting on top of the dielectric.
     const double zTopCu = geom_.zDielHalf + geom_.tCuCm / 2.0;
-    auto topCu = std::make_unique<SolidHole>(0., 0., zTopCu, geom_.rHoleCm,
-                                             geom_.rHoleCm, hx, hy, geom_.tCuCm / 2.0);
+    auto topCu = std::make_unique<SolidHole>(0., 0., zTopCu, rCu,
+                                             rCu, hx, hy, geom_.tCuCm / 2.0);
     topCu->SetSectors(sec);
     topCu->SetBoundaryPotential(geom_.vTopCu);
     geo_.AddSolid(topCu.get(), &cu_);
@@ -812,6 +814,7 @@ class ThgemDetector {
   static ThgemGeom ComputeGeom(const GeometryConfig& g, const FieldConfig& f) {
     ThgemGeom o;
     o.rHoleCm   = g.holeDiameterUm  * 0.5e-4;   // µm diameter → cm radius
+    o.rimCm     = g.rimUm           * 1.e-4;
     o.pitchCm   = g.holePitchUm     * 1.e-4;
     o.tDielCm   = g.plateThicknessUm  * 1.e-4;
     o.tCuCm     = g.copperThicknessUm * 1.e-4;
@@ -1067,7 +1070,9 @@ std::string DeriveFieldCacheName(const GeometryConfig& g, const FieldConfig& f) 
      << "_dV" << I(f.deltaVThgemV) << "_Ed" << FileSafeNumber(f.eDriftKvcm)
      << "_Ei" << FileSafeNumber(f.eInductionKvcm)
      << "_g" << g.gridNx << "x" << g.gridNz
-     << "_s" << g.holeSectors << "_pc" << g.periodicCopies << "_v2.txt";
+     << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
+  if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);   // only when set → straight-hole caches stay valid
+  ss << "_v2.txt";
   return ss.str();
 }
 
@@ -1085,7 +1090,9 @@ std::string DeriveWeightingCacheName(const GeometryConfig& g) {
      << "_" << g.dielectric
      << "_m" << kMapNx << "x" << kMapNz
      << "_e" << I(g.targetElementSizeUm) << "_n" << g.minElements << "-" << g.maxElements
-     << "_s" << g.holeSectors << "_pc" << g.periodicCopies << "_v1.txt";
+     << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
+  if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);
+  ss << "_v1.txt";
   return ss.str();
 }
 

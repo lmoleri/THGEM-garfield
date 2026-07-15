@@ -182,7 +182,7 @@ single-event run is statistical and may show no avalanche. That is expected phys
 
 | Section | Keys |
 |---|---|
-| `geometry` | `hole_diameter_um`, `hole_pitch_um`, `plate_thickness_um`, `copper_thickness_um`, `rim_um` (0 only), `drift_gap_mm`, `induction_gap_mm`, `dielectric_material` (`fr4`/`kapton`), plus neBEM mesh + transport-grid controls (`target_element_size_um`, `grid_nx`, `grid_nz`, `periodic_copies`, `hole_sectors`, `min_elements`, `max_elements`) |
+| `geometry` | `hole_diameter_um`, `hole_pitch_um`, `plate_thickness_um`, `copper_thickness_um`, `rim_um` (copper etched back from the hole edge; 0 = straight hole), `drift_gap_mm`, `induction_gap_mm`, `dielectric_material` (`fr4`/`kapton`), plus neBEM mesh + transport-grid controls (`target_element_size_um`, `grid_nx`, `grid_nz`, `periodic_copies`, `hole_sectors`, `min_elements`, `max_elements`) |
 | `fields` | `e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm` |
 | `source` | `energy_keV`, `source_distances_mm` (height above the top copper; `null` = random over the drift gap), `x_positions_cm` (`null` = random over the cell; a fixed `x` pins `y = 0`, so `x = 0` is the hole axis) |
 | `gas` | Magboltz mixture, temperature, pressure, Penning, field grid |

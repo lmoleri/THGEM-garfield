@@ -236,8 +236,9 @@ class ConfigPanel(QScrollArea):
         self.copper_thickness = self._dspin(0.0, 200.0, 5.0, 1, 35.0)
         self.copper_thickness.setToolTip("Copper cladding thickness per face [μm]")
         self.rim_um = self._dspin(0.0, 500.0, 5.0, 1, 0.0)
-        self.rim_um.setEnabled(False)   # etched rim not modelled in v1
-        self.rim_um.setToolTip("Etched dielectric rim [μm] — v1 supports 0 only (straight hole)")
+        self.rim_um.setToolTip(
+            "Etched rim [μm]: the copper is etched back from the hole edge, so the copper "
+            "openings are wider than the dielectric hole by this amount (0 = straight hole).")
         self.drift_gap = self._dspin(0.5, 20.0, 0.5, 2, 3.0)
         self.drift_gap.setToolTip("Drift gap: top copper → drift cathode [mm]")
         self.induction_gap = self._dspin(0.1, 20.0, 0.1, 2, 2.0)
@@ -249,7 +250,7 @@ class ConfigPanel(QScrollArea):
         geo_form.addRow("Hole pitch [μm]",     self.hole_pitch)
         geo_form.addRow("Plate thickness [μm]", self.plate_thickness)
         geo_form.addRow("Copper thickness [μm]", self.copper_thickness)
-        geo_form.addRow("Rim [μm] (v1: 0)",    self.rim_um)
+        geo_form.addRow("Rim [μm]",            self.rim_um)
         geo_form.addRow("Drift gap [mm]",      self.drift_gap)
         geo_form.addRow("Induction gap [mm]",  self.induction_gap)
         geo_form.addRow("Dielectric",          self.dielectric_material)
@@ -2770,9 +2771,11 @@ class ResultsPanel(QTabWidget):
         if cp is None:
             return lines
         r     = cp.hole_diameter.value() * 0.5e-4
+        rim   = cp.rim_um.value() * 1e-4       # copper etched back by this much
         tdiel = cp.plate_thickness.value() * 1e-4
         tcu   = cp.copper_thickness.value() * 1e-4
         zdh   = tdiel / 2.0
+        rcu   = r + rim                         # copper opening radius
         x0, x1 = h2.GetXaxis().GetXmin(), h2.GetXaxis().GetXmax()
 
         for z in (zdh, zdh + tcu, -zdh, -(zdh + tcu)):
@@ -2791,13 +2794,19 @@ class ResultsPanel(QTabWidget):
         ncells = int(math.ceil(x1 / pitch)) + 1 if pitch > 0 else 1
         for c in range(-ncells, ncells + 1):
             xc = c * pitch
+            # Dielectric hole wall (radius r) spans the dielectric; when there is a rim,
+            # the copper openings (radius r+rim) are wider, drawn over the copper layers.
             for xw in (xc - r, xc + r):
                 if x0 <= xw <= x1:
-                    ln = ROOT.TLine(xw, -(zdh + tcu), xw, zdh + tcu)
-                    ln.SetLineColor(ROOT.kWhite)
-                    ln.SetLineStyle(2)
-                    ln.SetLineWidth(1)
+                    ln = ROOT.TLine(xw, -zdh, xw, zdh)
+                    ln.SetLineColor(ROOT.kWhite); ln.SetLineStyle(2); ln.SetLineWidth(1)
                     lines.append(ln)
+            for xw in (xc - rcu, xc + rcu):
+                if x0 <= xw <= x1:
+                    for za, zb in ((zdh, zdh + tcu), (-(zdh + tcu), -zdh)):
+                        ln = ROOT.TLine(xw, za, xw, zb)
+                        ln.SetLineColor(ROOT.kWhite); ln.SetLineStyle(2); ln.SetLineWidth(1)
+                        lines.append(ln)
         return lines
 
     def _redraw_thgem_field(self):
