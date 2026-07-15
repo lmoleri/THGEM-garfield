@@ -240,7 +240,7 @@ class ConfigPanel(QScrollArea):
         self.rim_um.setToolTip("Etched dielectric rim [μm] — v1 supports 0 only (straight hole)")
         self.drift_gap = self._dspin(0.5, 20.0, 0.5, 2, 3.0)
         self.drift_gap.setToolTip("Drift gap: top copper → drift cathode [mm]")
-        self.induction_gap = self._dspin(0.5, 20.0, 0.5, 2, 2.0)
+        self.induction_gap = self._dspin(0.1, 20.0, 0.1, 2, 2.0)
         self.induction_gap.setToolTip("Induction gap: bottom copper → anode pad [mm]")
         self.dielectric_material = QComboBox()
         self.dielectric_material.addItems(["FR4", "Kapton"])
