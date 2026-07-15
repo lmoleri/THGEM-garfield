@@ -880,6 +880,7 @@ class ResultsPanel(QTabWidget):
         self._trk_pan_z:      float = 0.0   # cm offset of Z visible centre
         self._trk_n_holes:    int   = 4     # N×N block of holes drawn in the 3D view
         self._trk_n_aval_paths: int = 50    # avalanche e⁻ drift lines drawn (0 = hide)
+        self._map_n_holes:    int   = 4     # holes tiled across the E/W field maps in x
         self._efield_cache: dict | None = None   # {x, y, Ex, Ey} computed arrays
         self._efield_root_canvas  = None   # ROOT TCanvas for E-field maps
         self._efield_objects: list = []
@@ -1165,6 +1166,17 @@ class ResultsPanel(QTabWidget):
         self.ef_cmap.addItems(list(_ROOT_PALETTE))
         self.ef_cmap.currentIndexChanged.connect(self._redraw_thgem_field)
         ef_h.addWidget(self.ef_cmap)
+        ef_h.addSpacing(12)
+        ef_h.addWidget(QLabel("Holes:"))
+        self.ef_holes = QSpinBox()
+        self.ef_holes.setRange(1, 15)
+        self.ef_holes.setValue(self._map_n_holes)
+        self.ef_holes.setMaximumWidth(52)
+        self.ef_holes.setToolTip(
+            "Number of holes shown across x. The field is periodic, so this tiles the "
+            "one simulated cell — exact, not an approximation.")
+        self.ef_holes.valueChanged.connect(self._on_map_holes_changed)
+        ef_h.addWidget(self.ef_holes)
         ef_h.addStretch()
         efield_layout.addWidget(ef_ctrl)
 
@@ -1203,6 +1215,17 @@ class ResultsPanel(QTabWidget):
         self.wf_cmap.addItems(list(_ROOT_PALETTE))
         self.wf_cmap.currentIndexChanged.connect(self._redraw_thgem_wfield)
         wf_h.addWidget(self.wf_cmap)
+        wf_h.addSpacing(12)
+        wf_h.addWidget(QLabel("Holes:"))
+        self.wf_holes = QSpinBox()
+        self.wf_holes.setRange(1, 15)
+        self.wf_holes.setValue(self._map_n_holes)
+        self.wf_holes.setMaximumWidth(52)
+        self.wf_holes.setToolTip(
+            "Number of holes shown across x. The weighting field is periodic, so this "
+            "tiles the one simulated cell — exact, not an approximation.")
+        self.wf_holes.valueChanged.connect(self._on_map_holes_changed)
+        wf_h.addWidget(self.wf_holes)
         wf_h.addStretch()
         wfield_layout.addWidget(wf_ctrl)
 
@@ -2669,9 +2692,13 @@ class ResultsPanel(QTabWidget):
         ROOT.gPad.SetRightMargin(0.16)
         ROOT.gPad.SetLeftMargin(0.13)
         if h2:
+            # The dump spans exactly one period in x (±pitch), so the map itself gives
+            # the pitch — no dependence on the config panel, which may have drifted.
+            pitch = (h2.GetXaxis().GetXmax() - h2.GetXaxis().GetXmin()) / 2.0
+            h2 = self._tile_map_x(h2, self._map_n_holes, pitch)
             h2.Draw("COLZ")
             objects.append(h2)
-            for ln in self._root_geometry_lines(h2):
+            for ln in self._root_geometry_lines(h2, pitch):
                 ln.Draw("SAME")
                 objects.append(ln)
 
@@ -2689,14 +2716,59 @@ class ResultsPanel(QTabWidget):
         canvas.Update()
         return canvas
 
-    def _root_geometry_lines(self, h2):
-        """TLine overlay of the copper surfaces and hole walls, spanning the map's x-range."""
+    def _tile_map_x(self, h2, n_holes, pitch):
+        """Return a copy of the x–z map widened to `n_holes` cells across x.
+
+        The dumped map already spans one full period (±pitch), and the field is
+        periodic, so this is an exact tiling — not an interpolation. z binning and the
+        per-hole x resolution are preserved (nbinsx scales with the width)."""
+        import ROOT  # noqa: PLC0415
+        n = max(1, int(n_holes))
+        if pitch <= 0 or n == 1:
+            return h2
+
+        srcx = h2.GetXaxis()
+        dx = (srcx.GetXmax() - srcx.GetXmin()) / srcx.GetNbins()   # source x bin width
+        half = n * pitch / 2.0
+        nx = max(1, int(round(2.0 * half / dx)))                   # preserve resolution
+        nz = h2.GetNbinsY()
+        zax = h2.GetYaxis()
+        wide = ROOT.TH2D(h2.GetName() + "_wide", h2.GetTitle(),
+                         nx, -half, half, nz, zax.GetXmin(), zax.GetXmax())
+        wide.SetDirectory(0)
+        wide.GetZaxis().SetTitle(h2.GetZaxis().GetTitle())
+        for iz in range(1, nz + 1):
+            z = wide.GetYaxis().GetBinCenter(iz)
+            jz = zax.FindBin(z)
+            for ix in range(1, nx + 1):
+                x = wide.GetXaxis().GetBinCenter(ix)
+                # wrap x into one period centred on the hole at 0
+                xw = ((x + pitch / 2.0) % pitch) - pitch / 2.0
+                wide.SetBinContent(ix, iz, h2.GetBinContent(srcx.FindBin(xw), jz))
+        return wide
+
+    def _on_map_holes_changed(self, value: int) -> None:
+        """Re-tile both field maps; keep the two 'Holes' spinboxes in sync."""
+        self._map_n_holes = int(value)
+        for spin in (getattr(self, "ef_holes", None), getattr(self, "wf_holes", None)):
+            if spin is not None and spin.value() != self._map_n_holes:
+                spin.blockSignals(True)
+                spin.setValue(self._map_n_holes)
+                spin.blockSignals(False)
+        self._redraw_thgem_field()
+        self._redraw_thgem_wfield()
+
+    def _root_geometry_lines(self, h2, pitch):
+        """TLine overlay of the copper surfaces and hole walls, spanning the map's x-range.
+
+        `pitch` (hole spacing) comes from the map so the hole walls line up with the
+        periodic field; the hole radius and plate/copper thicknesses come from the
+        config panel (they are not encoded in the map)."""
         import ROOT  # noqa: PLC0415
         lines = []
         cp = self.config_panel
         if cp is None:
             return lines
-        pitch = cp.hole_pitch.value() * 1e-4       # µm -> cm
         r     = cp.hole_diameter.value() * 0.5e-4
         tdiel = cp.plate_thickness.value() * 1e-4
         tcu   = cp.copper_thickness.value() * 1e-4
@@ -2707,6 +2779,14 @@ class ResultsPanel(QTabWidget):
             ln = ROOT.TLine(x0, z, x1, z)
             ln.SetLineColor(ROOT.kWhite)
             ln.SetLineWidth(1)
+            lines.append(ln)
+        # Drift cathode (top of the map) and anode pad (bottom) — the electrode stack
+        # that bounds the field in z, drawn at the map's z limits.
+        zmin, zmax = h2.GetYaxis().GetXmin(), h2.GetYaxis().GetXmax()
+        for zc, col in ((zmax, ROOT.kCyan + 1), (zmin, ROOT.kRed - 4)):
+            ln = ROOT.TLine(x0, zc, x1, zc)
+            ln.SetLineColor(col)
+            ln.SetLineWidth(3)
             lines.append(ln)
         ncells = int(math.ceil(x1 / pitch)) + 1 if pitch > 0 else 1
         for c in range(-ncells, ncells + 1):

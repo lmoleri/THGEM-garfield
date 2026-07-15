@@ -77,8 +77,12 @@ centre plus an on-axis profile, which is what the GUI's **E-Field** tab renders.
 ## E-Field and Weighting Field views
 
 Both tabs draw into an **interactive ROOT canvas** — right-click inside it to zoom, rescale the axes,
-or save — showing an x–z colour map through the hole centre (with the copper/hole overlay) next to
-the on-hole-axis profile. Each has a Quantity and a Palette selector.
+or save — showing an x–z colour map next to the on-hole-axis profile, with the electrode stack
+overlaid (copper surfaces, hole walls, and the drift-cathode and anode planes bounding the map in z).
+Each has a Quantity and a Palette selector, plus a **Holes** spinbox (1–15, default 4): the simulation
+solves and dumps a single periodic cell, and the field is exactly periodic, so this tiles that cell
+across x to show the detector as an array of holes — an exact repeat, not an interpolation, done
+live in the GUI with no re-run.
 
 - **E-Field** — `|E|` or the potential, from the neBEM solve.
 - **Weighting Field** — the anode's **true** Shockley–Ramo weighting potential `W` (or `|E_w|`),
