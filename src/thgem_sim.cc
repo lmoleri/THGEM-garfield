@@ -41,6 +41,7 @@
 #include <TTree.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -65,7 +66,6 @@
 #include "Garfield/Component.hh"
 #include "Garfield/ComponentGrid.hh"
 #include "Garfield/ComponentNeBem3d.hh"
-#include "Garfield/ComponentUser.hh"
 #include "Garfield/FundamentalConstants.hh"
 #include "Garfield/GarfieldConstants.hh"
 #include "Garfield/GeometrySimple.hh"
@@ -88,7 +88,6 @@ using Garfield::AvalancheMC;
 using Garfield::AvalancheMicroscopic;
 using Garfield::ComponentGrid;
 using Garfield::ComponentNeBem3d;
-using Garfield::ComponentUser;
 using Garfield::GeometrySimple;
 using Garfield::MediumConductor;
 using Garfield::MediumMagboltz;
@@ -216,8 +215,8 @@ struct Config {
 };
 
 // ─── Per-distance summary ─────────────────────────────────────────────────────
-// Field names retain the tgc "cathode_top" slot for ROOT-schema compatibility
-// with the shared GUI; in THGEM v1 the cathode_top channel is always zero.
+// Read out three electrodes: the anode pad, the THGEM top copper and the THGEM
+// bottom copper (the drift cathode is not read out).
 
 struct DistanceSummary {
   std::optional<double> distanceMm;           // nullopt = random per event
@@ -228,12 +227,12 @@ struct DistanceSummary {
   double      meanAnodeChargeFC     = 0.;
   double      rmsAnodeChargeFC      = 0.;
   double      semAnodeChargeFC      = 0.;
-  double      meanCathodeChargeFC      = 0.;
-  double      rmsCathodeChargeFC       = 0.;
-  double      semCathodeChargeFC       = 0.;
-  double      meanCathodeTopChargeFC   = 0.;
-  double      rmsCathodeTopChargeFC    = 0.;
-  double      semCathodeTopChargeFC    = 0.;
+  double      meanTopChargeFC       = 0.;
+  double      rmsTopChargeFC        = 0.;
+  double      semTopChargeFC        = 0.;
+  double      meanBotChargeFC       = 0.;
+  double      rmsBotChargeFC        = 0.;
+  double      semBotChargeFC        = 0.;
   double      meanChargeRatio       = 0.;
   double      rmsChargeRatio        = 0.;
   double      semChargeRatio        = 0.;
@@ -745,6 +744,7 @@ class ThgemDetector {
                                              rCu, hx, hy, geom_.tCuCm / 2.0);
     topCu->SetSectors(sec);
     topCu->SetBoundaryPotential(geom_.vTopCu);
+    topCu->SetLabel("thgem_top");   // read out its induced signal (neBEM weighting)
     geo_.AddSolid(topCu.get(), &cu_);
     solids_.push_back(std::move(topCu));
 
@@ -756,12 +756,13 @@ class ThgemDetector {
     geo_.AddSolid(diel.get(), &diel_);
     solids_.push_back(std::move(diel));
 
-    // Bottom copper cladding (box with hole).
+    // Bottom copper cladding (box with hole); copper etched back by the rim, like the top.
     const double zBotCu = -(geom_.zDielHalf + geom_.tCuCm / 2.0);
-    auto botCu = std::make_unique<SolidHole>(0., 0., zBotCu, geom_.rHoleCm,
-                                             geom_.rHoleCm, hx, hy, geom_.tCuCm / 2.0);
+    auto botCu = std::make_unique<SolidHole>(0., 0., zBotCu, rCu,
+                                             rCu, hx, hy, geom_.tCuCm / 2.0);
     botCu->SetSectors(sec);
     botCu->SetBoundaryPotential(geom_.vBotCu);
+    botCu->SetLabel("thgem_bottom");
     geo_.AddSolid(botCu.get(), &cu_);
     solids_.push_back(std::move(botCu));
 
@@ -914,72 +915,27 @@ void DumpFieldMap(Garfield::Component& cmp, const ThgemGeom& g, TDirectory* dir)
             << "on-axis profile).\n";
 }
 
-// ─── Anode weighting field (true neBEM solve) ─────────────────────────────────
-// The *signal* is still computed with the analytic parallel-plate stand-in (see
-// SetupAnodeWeighting).  These sample the exact Shockley–Ramo weighting field of the
-// labelled anode electrode (1 V on it, 0 V on all others) so the GUI can display it —
-// and so the stand-in can be validated against the truth.
-struct WeightingMap {
-  std::vector<double> w;      // weighting potential (dimensionless), [iz*kMapNx + ix]
-  std::vector<double> emag;   // |E_w| [1/cm]
-  bool valid = false;
-};
+// ─── Electrode weighting fields (true neBEM solve, sampled to the grid) ────────
+// The three read-out electrodes.  Each electrode's Shockley–Ramo weighting field
+// (1 V on it, 0 V on the others) is solved by neBEM, sampled onto the transport grid
+// via ComponentGrid::SaveWeightingField, and used both for the induced signal and for
+// the Weighting Field display.  ComponentGrid holds one weighting field per instance,
+// so there is one grid per electrode.
+const std::array<std::string, 3> kReadoutIds{"anode", "thgem_top", "thgem_bottom"};
 
-// Sample W and E_w on the same x–z slice DumpFieldMap uses; atomic write, so an
-// interrupted sample can never leave a truncated file that looks like a valid cache.
-void SampleWeightingToFile(ComponentNeBem3d& cmp, const ThgemGeom& g,
-                           const std::string& file) {
-  const std::string tmp = file + ".part";
-  {
-    std::ofstream out(tmp);
-    if (!out) throw std::runtime_error("Cannot write weighting cache: " + tmp);
-    out << std::setprecision(8);
-    const double xLo = -g.pitchCm, xHi = g.pitchCm;
-    const double zLo = g.zAnode,   zHi = g.zDrift;
-    for (int iz = 0; iz < kMapNz; ++iz) {
-      const double z = zLo + (iz + 0.5) * (zHi - zLo) / kMapNz;
-      for (int ix = 0; ix < kMapNx; ++ix) {
-        const double x = xLo + (ix + 0.5) * (xHi - xLo) / kMapNx;
-        double wx = 0., wy = 0., wz = 0.;
-        cmp.WeightingField(x, 0., z, wx, wy, wz, "anode");
-        const double wp = cmp.WeightingPotential(x, 0., z, "anode");
-        out << x << ' ' << z << ' ' << wp << ' '
-            << wx << ' ' << wy << ' ' << wz << '\n';
-      }
-    }
-    out.flush();
-    if (!out)
-      throw std::runtime_error("Write error while sampling weighting cache: " + tmp);
-  }  // close the stream before renaming
-  fs::rename(tmp, file);
-}
-
-// Read a weighting cache back.  Rejects a truncated file: it must hold exactly the grid.
-WeightingMap LoadWeightingMap(const std::string& file) {
-  WeightingMap m;
-  std::ifstream in(file);
-  if (!in) return m;
-  const std::size_t n = static_cast<std::size_t>(kMapNx) * kMapNz;
-  m.w.reserve(n);
-  m.emag.reserve(n);
-  double x, z, wp, wx, wy, wz;
-  while (in >> x >> z >> wp >> wx >> wy >> wz) {
-    m.w.push_back(wp);
-    m.emag.push_back(std::sqrt(wx * wx + wy * wy + wz * wz));
-  }
-  m.valid = (m.w.size() == n);
-  return m;
-}
-
-// Write the weighting map into the run's ROOT file for the GUI's Weighting Field tab.
-void DumpWeightingMap(const WeightingMap& m, const ThgemGeom& g, TDirectory* dir) {
-  if (!dir || !m.valid) return;
+// Write one electrode's weighting map (x–z slice through the hole centre) into the run's
+// ROOT file for the GUI's Weighting Field tab, read back from its loaded grid.
+void DumpWeightingMap(TDirectory* dir, const std::string& id,
+                      Garfield::Component& wgrid, const ThgemGeom& g) {
+  if (!dir) return;
   const double xLo = -g.pitchCm, xHi = g.pitchCm;
   const double zLo = g.zAnode,   zHi = g.zDrift;
 
-  TH2D hW("h_wpot", "Anode weighting potential (neBEM);x [cm];z [cm]",
+  TH2D hW(("h_wpot_" + id).c_str(),
+          (id + " weighting potential (neBEM);x [cm];z [cm]").c_str(),
           kMapNx, xLo, xHi, kMapNz, zLo, zHi);
-  TH2D hWE("h_wfield_mag", "Anode |E_{w}| (neBEM);x [cm];z [cm]",
+  TH2D hWE(("h_wfield_mag_" + id).c_str(),
+           (id + " |E_{w}| (neBEM);x [cm];z [cm]").c_str(),
            kMapNx, xLo, xHi, kMapNz, zLo, zHi);
   hW.SetDirectory(nullptr);
   hWE.SetDirectory(nullptr);
@@ -987,28 +943,28 @@ void DumpWeightingMap(const WeightingMap& m, const ThgemGeom& g, TDirectory* dir
   std::vector<double> axZ, axW;
   axZ.reserve(kMapNz);
   axW.reserve(kMapNz);
-  const int ixAxis = kMapNx / 2;   // kMapNx is odd ⇒ this column is exactly x = 0
 
   for (int iz = 0; iz < kMapNz; ++iz) {
+    const double z = zLo + (iz + 0.5) * (zHi - zLo) / kMapNz;
     for (int ix = 0; ix < kMapNx; ++ix) {
-      const std::size_t k = static_cast<std::size_t>(iz) * kMapNx + ix;
-      hW.SetBinContent(ix + 1, iz + 1, m.w[k]);
-      hWE.SetBinContent(ix + 1, iz + 1, m.emag[k]);
+      const double x = xLo + (ix + 0.5) * (xHi - xLo) / kMapNx;
+      double wx = 0., wy = 0., wz = 0.;
+      wgrid.WeightingField(x, 0., z, wx, wy, wz, id);       // label ignored by the grid
+      hW.SetBinContent(ix + 1, iz + 1, wgrid.WeightingPotential(x, 0., z, id));
+      hWE.SetBinContent(ix + 1, iz + 1, std::sqrt(wx * wx + wy * wy + wz * wz));
     }
-    axZ.push_back(zLo + (iz + 0.5) * (zHi - zLo) / kMapNz);
-    axW.push_back(m.w[static_cast<std::size_t>(iz) * kMapNx + ixAxis]);
+    axZ.push_back(z);
+    axW.push_back(wgrid.WeightingPotential(0., 0., z, id));
   }
 
   TGraph gAxisW(static_cast<int>(axZ.size()), axZ.data(), axW.data());
-  gAxisW.SetName("g_axis_wpot");
-  gAxisW.SetTitle("On-axis anode weighting potential;z [cm];W");
+  gAxisW.SetName(("g_axis_wpot_" + id).c_str());
+  gAxisW.SetTitle((id + " on-axis weighting potential;z [cm];W").c_str());
 
   dir->cd();
-  hW.Write("h_wpot");
-  hWE.Write("h_wfield_mag");
-  gAxisW.Write("g_axis_wpot");
-  std::cout << "  Weighting map dumped (" << kMapNx << "×" << kMapNz
-            << " x–z slice, on-axis W profile).\n";
+  hW.Write();
+  hWE.Write();
+  gAxisW.Write();
 }
 
 // Sample the neBEM field onto the grid nodes and write a ComponentGrid "xyz"
@@ -1091,53 +1047,34 @@ std::string DeriveFieldCacheName(const GeometryConfig& g, const FieldConfig& f) 
 // Cache filename for the sampled anode weighting field.  Keyed by the geometry and
 // mesh *only* — a Shockley–Ramo weighting field depends on the electrode shapes, not
 // on the applied voltages — so an entire ΔV / E-field scan reuses a single solve.
-std::string DeriveWeightingCacheName(const GeometryConfig& g) {
+std::string DeriveWeightingCacheName(const GeometryConfig& g, const std::string& id) {
   auto I = [](double v) {
     return std::to_string(static_cast<long long>(std::llround(v)));
   };
   std::ostringstream ss;
-  ss << "thgem_wpot_h" << I(g.holeDiameterUm) << "_p" << I(g.holePitchUm)
+  ss << "thgem_wpot_" << id << "_h" << I(g.holeDiameterUm) << "_p" << I(g.holePitchUm)
      << "_t" << I(g.plateThicknessUm) << "_c" << I(g.copperThicknessUm)
      << "_dg" << FileSafeNumber(g.driftGapMm) << "_ig" << FileSafeNumber(g.inductionGapMm)
      << "_" << g.dielectric
-     << "_m" << kMapNx << "x" << kMapNz
+     << "_g" << g.gridNx << "x" << g.gridNz     // sampled onto the transport grid
      << "_e" << I(g.targetElementSizeUm) << "_n" << g.minElements << "-" << g.maxElements
      << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
   if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);
-  ss << "_v1.txt";
+  ss << "_v2.txt";
   return ss.str();
-}
-
-// Analytic parallel-plate Ramo weighting field of the anode pad, valid in the
-// induction gap (zAnode < z < zBotCuBot) and screened to zero above the bottom
-// copper.  A collected electron drifting the full gap induces exactly one unit
-// of charge; charges still inside/above the THGEM induce nothing (bottom-copper
-// screening).  A fast, physically-motivated v1 stand-in for a full neBEM
-// weighting solve on the (structured) anode.
-void SetupAnodeWeighting(ComponentUser& w, const ThgemGeom& g) {
-  const double zA = g.zAnode;
-  const double zB = g.zBotCuBot;
-  const double d  = zB - zA;   // = induction gap [cm]
-  w.SetWeightingPotential(
-      [zA, zB, d](const double, const double, const double z) -> double {
-        if (z <= zA) return 1.0;
-        if (z >= zB) return 0.0;
-        return (zB - z) / d;
-      }, "anode");
-  w.SetWeightingField(
-      [zA, zB, d](const double, const double, const double z,
-                  double& wx, double& wy, double& wz) {
-        wx = 0.; wy = 0.;
-        wz = (z > zA && z < zB) ? (1.0 / d) : 0.0;
-      }, "anode");
 }
 
 // ─── Sensor setup ─────────────────────────────────────────────────────────────
 
-void SetupSensor(Sensor& sensor, ComponentGrid& grid, ComponentUser& wAnode,
+// One weighting grid per read-out electrode (anode, THGEM top copper, THGEM bottom
+// copper), each holding that electrode's neBEM weighting field sampled onto the grid.
+void SetupSensor(Sensor& sensor, ComponentGrid& grid,
+                 std::array<ComponentGrid, 3>& wgrids,
                  const ThgemGeom& g, const SimulationConfig& sim) {
   sensor.AddComponent(&grid);            // transport field + drift medium
-  sensor.AddElectrode(&wAnode, "anode"); // analytic anode weighting field
+  for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+    sensor.AddElectrode(&wgrids[e], kReadoutIds[e]);
+  }
 
   const std::size_t nBins =
       static_cast<std::size_t>(std::round(sim.timeWindowNs / sim.timeStepNs));
@@ -1168,81 +1105,85 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // ── Histograms ──────────────────────────────────────────────────────────────
   TH1D hAnodeQ("h_anode_charge",
                "Induced charge on anode;Q_{anode} [fC];Events", 200, 0., 0.);
-  TH1D hCathodeQ("h_cathode_charge",
-                 "Induced charge on cathode;Q_{cathode} [fC];Events", 200, 0., 0.);
+  TH1D hTopQ("h_thgem_top_charge",
+             "Induced charge on THGEM top;Q_{top} [fC];Events", 200, 0., 0.);
   TH1D hRatio("h_ratio_charge",
-              "Charge ratio;Q_{cathode}/Q_{anode};Events", 100, 0., 2.);
+              "Charge ratio;Q_{top}/Q_{anode};Events", 100, -2., 2.);
   TH1D hNprimary("h_n_primary_electrons",
                  "Primary electrons per event;N_{e,primary};Events", 400, -0.5, 399.5);
   TH1D hAvalSize("h_avalanche_size",
                  "Total avalanche size;N_{e,total};Events", 200, 0., 0.);
-  TH1D hCathodeTopQ("h_cathode_top_charge",
-                   "Induced charge on cathode_top;Q_{cathode\\_top} [fC];Events", 200, 0., 0.);
+  TH1D hBotQ("h_thgem_bottom_charge",
+             "Induced charge on THGEM bottom;Q_{bottom} [fC];Events", 200, 0., 0.);
 
-  TProfile pAnodeSignal("p_anode_signal",
-                        "Mean anode signal;t [ns];#LTi_{anode}#GT [fC/ns]",
-                        static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeSignal("p_cathode_signal",
-                          "Mean cathode signal;t [ns];#LTi_{cathode}#GT [fC/ns]",
-                          static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeTopSignal("p_cathode_top_signal",
-                             "Mean cathode_top signal;t [ns];#LTi_{cathode\\_top}#GT [fC/ns]",
-                             static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pAnodeElec("p_anode_electron",
-                      "Mean anode e^{-} signal;t [ns];#LTi_{anode,e}#GT [fC/ns]",
-                      static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pAnodeIon("p_anode_ion",
-                     "Mean anode ion signal;t [ns];#LTi_{anode,ion}#GT [fC/ns]",
-                     static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeElec("p_cathode_electron",
-                        "Mean cathode e^{-} signal;t [ns];#LTi_{cathode,e}#GT [fC/ns]",
-                        static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeIon("p_cathode_ion",
-                       "Mean cathode ion signal;t [ns];#LTi_{cathode,ion}#GT [fC/ns]",
-                       static_cast<int>(nBins), 0., sim.timeWindowNs);
-  // Amplifier profiles retained (zero in v1) for ROOT-schema compatibility.
-  TProfile pAnodeAmp("p_anode_amp", "Mean anode amplifier output;t [ns];#LTV_{anode}#GT [mV]",
-                     static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeAmp("p_cathode_amp", "Mean cathode amplifier output;t [ns];#LTV_{cathode}#GT [mV]",
-                       static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pAnodeAmpInt("p_anode_amp_int", "Integrated anode amp output;t [ns];#LT#int V dt#GT [mV ns]",
-                        static_cast<int>(nBins), 0., sim.timeWindowNs);
-  TProfile pCathodeAmpInt("p_cathode_amp_int", "Integrated cathode amp output;t [ns];#LT#int V dt#GT [mV ns]",
-                          static_cast<int>(nBins), 0., sim.timeWindowNs);
+  auto MkProf = [&](const char* name, const char* title) {
+    return TProfile(name, title, static_cast<int>(nBins), 0., sim.timeWindowNs);
+  };
+  TProfile pAnodeSignal = MkProf("p_anode_signal",
+                        "Mean anode signal;t [ns];#LTi_{anode}#GT [fC/ns]");
+  TProfile pTopSignal   = MkProf("p_thgem_top_signal",
+                        "Mean THGEM-top signal;t [ns];#LTi_{top}#GT [fC/ns]");
+  TProfile pBotSignal   = MkProf("p_thgem_bottom_signal",
+                        "Mean THGEM-bottom signal;t [ns];#LTi_{bottom}#GT [fC/ns]");
+  TProfile pAnodeElec   = MkProf("p_anode_electron",
+                        "Mean anode e^{-} signal;t [ns];#LTi_{anode,e}#GT [fC/ns]");
+  TProfile pAnodeIon    = MkProf("p_anode_ion",
+                        "Mean anode ion signal;t [ns];#LTi_{anode,ion}#GT [fC/ns]");
+  // Amplifier output profiles (populated when simulation.amplifier is enabled).
+  TProfile pAnodeAmp    = MkProf("p_anode_amp",
+                        "Mean anode amplifier output;t [ns];#LTV_{anode}#GT [mV]");
+  TProfile pTopAmp      = MkProf("p_thgem_top_amp",
+                        "Mean THGEM-top amplifier output;t [ns];#LTV_{top}#GT [mV]");
+  TProfile pBotAmp      = MkProf("p_thgem_bottom_amp",
+                        "Mean THGEM-bottom amplifier output;t [ns];#LTV_{bottom}#GT [mV]");
+  TProfile pAnodeAmpInt = MkProf("p_anode_amp_int",
+                        "Integrated anode amp output;t [ns];#LT#int V dt#GT [mV ns]");
+  TProfile pTopAmpInt   = MkProf("p_thgem_top_amp_int",
+                        "Integrated THGEM-top amp output;t [ns];#LT#int V dt#GT [mV ns]");
+  TProfile pBotAmpInt   = MkProf("p_thgem_bottom_amp_int",
+                        "Integrated THGEM-bottom amp output;t [ns];#LT#int V dt#GT [mV ns]");
 
   for (TH1* h : std::initializer_list<TH1*>{
-           &hAnodeQ, &hCathodeQ, &hCathodeTopQ, &hRatio, &hNprimary, &hAvalSize,
-           &pAnodeSignal, &pCathodeSignal, &pCathodeTopSignal,
-           &pAnodeElec, &pAnodeIon, &pCathodeElec, &pCathodeIon,
-           &pAnodeAmp, &pCathodeAmp, &pAnodeAmpInt, &pCathodeAmpInt}) {
+           &hAnodeQ, &hTopQ, &hBotQ, &hRatio, &hNprimary, &hAvalSize,
+           &pAnodeSignal, &pTopSignal, &pBotSignal, &pAnodeElec, &pAnodeIon,
+           &pAnodeAmp, &pTopAmp, &pBotAmp, &pAnodeAmpInt, &pTopAmpInt, &pBotAmpInt}) {
     h->SetDirectory(nullptr);
   }
 
   // ── Per-event signal tree ────────────────────────────────────────────────────
   TTree signalTree("t_signals", "Per-event signal waveforms");
   signalTree.SetDirectory(nullptr);
-  std::vector<float> anodeSig(nBins, 0.f), cathodeSig(nBins, 0.f);
+  // Three read-out electrodes: anode pad, THGEM top copper, THGEM bottom copper.
+  std::vector<float> anodeSig(nBins, 0.f), topSig(nBins, 0.f), botSig(nBins, 0.f);
   std::vector<float> anodeSigE(nBins, 0.f), anodeSigI(nBins, 0.f);
-  std::vector<float> cathodeSigE(nBins, 0.f), cathodeSigI(nBins, 0.f);
-  std::vector<float> anodeAmp(nBins, 0.f), cathodeAmp(nBins, 0.f);
-  std::vector<float> anodeAmpInt(nBins, 0.f), cathodeAmpInt(nBins, 0.f);
-  std::vector<double> bufA(nBins), bufC(nBins);
-  std::vector<double> bufAe(nBins), bufAi(nBins), bufCe(nBins), bufCi(nBins);
+  std::vector<float> topSigE(nBins, 0.f), topSigI(nBins, 0.f);
+  std::vector<float> botSigE(nBins, 0.f), botSigI(nBins, 0.f);
+  std::vector<float> anodeAmp(nBins, 0.f), topAmp(nBins, 0.f), botAmp(nBins, 0.f);
+  std::vector<float> anodeAmpInt(nBins, 0.f), topAmpInt(nBins, 0.f), botAmpInt(nBins, 0.f);
+  std::vector<double> bufA(nBins), bufT(nBins), bufB(nBins);
+  std::vector<double> bufAe(nBins), bufAi(nBins), bufTe(nBins), bufTi(nBins),
+                      bufBe(nBins), bufBi(nBins);
   int   evtId = 0;
-  float evtQa = 0.f, evtQc = 0.f;
-  signalTree.Branch("event",             &evtId, "event/I");
-  signalTree.Branch("anode_charge_fC",   &evtQa, "anode_charge_fC/F");
-  signalTree.Branch("cathode_charge_fC", &evtQc, "cathode_charge_fC/F");
-  signalTree.Branch("anode",   &anodeSig);
-  signalTree.Branch("cathode", &cathodeSig);
-  signalTree.Branch("anode_e",   &anodeSigE);
-  signalTree.Branch("anode_i",   &anodeSigI);
-  signalTree.Branch("cathode_e", &cathodeSigE);
-  signalTree.Branch("cathode_i", &cathodeSigI);
-  signalTree.Branch("anode_amp",   &anodeAmp);
-  signalTree.Branch("cathode_amp", &cathodeAmp);
-  signalTree.Branch("anode_amp_int",   &anodeAmpInt);
-  signalTree.Branch("cathode_amp_int", &cathodeAmpInt);
+  float evtQa = 0.f, evtQt = 0.f, evtQb = 0.f;
+  signalTree.Branch("event",                  &evtId, "event/I");
+  signalTree.Branch("anode_charge_fC",        &evtQa, "anode_charge_fC/F");
+  signalTree.Branch("thgem_top_charge_fC",    &evtQt, "thgem_top_charge_fC/F");
+  signalTree.Branch("thgem_bottom_charge_fC", &evtQb, "thgem_bottom_charge_fC/F");
+  signalTree.Branch("anode",        &anodeSig);
+  signalTree.Branch("thgem_top",    &topSig);
+  signalTree.Branch("thgem_bottom", &botSig);
+  signalTree.Branch("anode_e",        &anodeSigE);
+  signalTree.Branch("anode_i",        &anodeSigI);
+  signalTree.Branch("thgem_top_e",    &topSigE);
+  signalTree.Branch("thgem_top_i",    &topSigI);
+  signalTree.Branch("thgem_bottom_e", &botSigE);
+  signalTree.Branch("thgem_bottom_i", &botSigI);
+  signalTree.Branch("anode_amp",           &anodeAmp);
+  signalTree.Branch("thgem_top_amp",       &topAmp);
+  signalTree.Branch("thgem_bottom_amp",    &botAmp);
+  signalTree.Branch("anode_amp_int",       &anodeAmpInt);
+  signalTree.Branch("thgem_top_amp_int",   &topAmpInt);
+  signalTree.Branch("thgem_bottom_amp_int", &botAmpInt);
 
   // ── 3D track branches ────────────────────────────────────────────────────────
   std::vector<float> primaryX, primaryY, primaryZ;
@@ -1300,11 +1241,11 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
               << " um steps, " << sim.ionTimeWindowNs << " ns time window.\n";
   }
 
-  std::vector<double> anodeCharges, cathodeCharges, cathodeTopCharges, chargeRatios;
+  std::vector<double> anodeCharges, topCharges, botCharges, chargeRatios;
   std::vector<double> primaryCounts, avalancheSizes;
   anodeCharges.reserve(sim.nEvents);
-  cathodeCharges.reserve(sim.nEvents);
-  cathodeTopCharges.reserve(sim.nEvents);
+  topCharges.reserve(sim.nEvents);
+  botCharges.reserve(sim.nEvents);
 
   std::size_t nInteracted = 0;
   const std::size_t progressStep = std::max<std::size_t>(1, sim.nEvents / 10);
@@ -1477,57 +1418,65 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       }
     }
 
-    // Bin the induced current [fC/ns] on the anode.  The cathode and cathode_top
-    // channels are not read out in v1 (kept zero for ROOT-schema compatibility
-    // with the shared GUI).
+    // Bin the induced current [fC/ns] on each read-out electrode (anode pad, THGEM
+    // top copper, THGEM bottom copper), from their neBEM weighting fields.
     for (std::size_t k = 0; k < nBins; ++k) {
-      bufA[k]  = sensor.GetSignal("anode",   k);
+      bufA[k]  = sensor.GetSignal("anode", k);
       bufAe[k] = sensor.GetElectronSignal("anode", k);
       bufAi[k] = sensor.GetIonSignal     ("anode", k);
-      bufC[k] = 0.; bufCe[k] = 0.; bufCi[k] = 0.;
+      bufT[k]  = sensor.GetSignal("thgem_top", k);
+      bufTe[k] = sensor.GetElectronSignal("thgem_top", k);
+      bufTi[k] = sensor.GetIonSignal     ("thgem_top", k);
+      bufB[k]  = sensor.GetSignal("thgem_bottom", k);
+      bufBe[k] = sensor.GetElectronSignal("thgem_bottom", k);
+      bufBi[k] = sensor.GetIonSignal     ("thgem_bottom", k);
     }
 
-    double rawAnode = 0., rawCathode = 0.;
+    double rawAnode = 0., rawTop = 0., rawBot = 0.;
     for (std::size_t k = 0; k < nBins; ++k) {
-      rawAnode   += bufA[k];
-      rawCathode += bufC[k];
+      rawAnode += bufA[k];
+      rawTop   += bufT[k];
+      rawBot   += bufB[k];
       const double t = (static_cast<double>(k) + 0.5) * sim.timeStepNs;
-      pAnodeSignal.Fill(t,   bufA[k] * nPrimary);
-      pCathodeSignal.Fill(t, bufC[k] * nPrimary);
-      pCathodeTopSignal.Fill(t, 0.);
+      pAnodeSignal.Fill(t, bufA[k] * nPrimary);
+      pTopSignal.Fill(t,   bufT[k] * nPrimary);
+      pBotSignal.Fill(t,   bufB[k] * nPrimary);
       pAnodeElec.Fill(t,   bufAe[k] * nPrimary);
       pAnodeIon.Fill(t,    bufAi[k] * nPrimary);
-      pCathodeElec.Fill(t, bufCe[k] * nPrimary);
-      pCathodeIon.Fill(t,  bufCi[k] * nPrimary);
-      anodeSig[k]    = static_cast<float>(bufA[k] * nPrimary);
-      cathodeSig[k]  = static_cast<float>(bufC[k] * nPrimary);
-      anodeSigE[k]   = static_cast<float>(bufAe[k] * nPrimary);
-      anodeSigI[k]   = static_cast<float>(bufAi[k] * nPrimary);
-      cathodeSigE[k] = static_cast<float>(bufCe[k] * nPrimary);
-      cathodeSigI[k] = static_cast<float>(bufCi[k] * nPrimary);
+      anodeSig[k]  = static_cast<float>(bufA[k] * nPrimary);
+      topSig[k]    = static_cast<float>(bufT[k] * nPrimary);
+      botSig[k]    = static_cast<float>(bufB[k] * nPrimary);
+      anodeSigE[k] = static_cast<float>(bufAe[k] * nPrimary);
+      anodeSigI[k] = static_cast<float>(bufAi[k] * nPrimary);
+      topSigE[k]   = static_cast<float>(bufTe[k] * nPrimary);
+      topSigI[k]   = static_cast<float>(bufTi[k] * nPrimary);
+      botSigE[k]   = static_cast<float>(bufBe[k] * nPrimary);
+      botSigI[k]   = static_cast<float>(bufBi[k] * nPrimary);
     }
 
-    // Sign convention: the anode collects avalanche electrons → negate its raw
-    // integral for the conventionally positive collected charge; the cathode
-    // (drift plane) integral is kept as-is.
-    const double qAnode      = -rawAnode   * sim.timeStepNs * nPrimary;  // [fC]
-    const double qCathode    =  rawCathode * sim.timeStepNs * nPrimary;  // [fC]
-    const double qCathodeTop =  0.;
+    // Sign: the anode collects the avalanche electrons → negate its raw integral for
+    // a conventionally positive collected charge.  The THGEM copper electrodes carry
+    // bipolar induced signals (charge passing induces then releases) whose net charge
+    // is ~0; the raw integral is kept as-is.
+    const double qAnode = -rawAnode * sim.timeStepNs * nPrimary;  // [fC]
+    const double qTop   =  rawTop   * sim.timeStepNs * nPrimary;  // [fC]
+    const double qBot   =  rawBot   * sim.timeStepNs * nPrimary;  // [fC]
 
     evtId = static_cast<int>(ev);
     evtQa = static_cast<float>(qAnode);
-    evtQc = static_cast<float>(qCathode);
+    evtQt = static_cast<float>(qTop);
+    evtQb = static_cast<float>(qBot);
     signalTree.Fill();
 
     hAnodeQ.Fill(qAnode);
-    hCathodeQ.Fill(qCathode);
-    hCathodeTopQ.Fill(qCathodeTop);
+    hTopQ.Fill(qTop);
+    hBotQ.Fill(qBot);
     anodeCharges.push_back(qAnode);
-    cathodeCharges.push_back(qCathode);
-    cathodeTopCharges.push_back(qCathodeTop);
+    topCharges.push_back(qTop);
+    botCharges.push_back(qBot);
 
-    if (qAnode > 0.) {
-      const double ratio = qCathode / qAnode;
+    if (qAnode != 0.) {
+      const double ratio = qTop / qAnode;
       hRatio.Fill(ratio);
       chargeRatios.push_back(ratio);
     }
@@ -1559,22 +1508,22 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   if (distDir) {
     distDir->cd();
     hAnodeQ.Write("h_anode_charge");
-    hCathodeQ.Write("h_cathode_charge");
-    hCathodeTopQ.Write("h_cathode_top_charge");
+    hTopQ.Write("h_thgem_top_charge");
+    hBotQ.Write("h_thgem_bottom_charge");
     hRatio.Write("h_ratio_charge");
     hNprimary.Write("h_n_primary_electrons");
     hAvalSize.Write("h_avalanche_size");
     pAnodeSignal.Write("p_anode_signal");
-    pCathodeSignal.Write("p_cathode_signal");
-    pCathodeTopSignal.Write("p_cathode_top_signal");
+    pTopSignal.Write("p_thgem_top_signal");
+    pBotSignal.Write("p_thgem_bottom_signal");
     pAnodeElec.Write("p_anode_electron");
     pAnodeIon.Write("p_anode_ion");
-    pCathodeElec.Write("p_cathode_electron");
-    pCathodeIon.Write("p_cathode_ion");
     pAnodeAmp.Write("p_anode_amp");
-    pCathodeAmp.Write("p_cathode_amp");
+    pTopAmp.Write("p_thgem_top_amp");
+    pBotAmp.Write("p_thgem_bottom_amp");
     pAnodeAmpInt.Write("p_anode_amp_int");
-    pCathodeAmpInt.Write("p_cathode_amp_int");
+    pTopAmpInt.Write("p_thgem_top_amp_int");
+    pBotAmpInt.Write("p_thgem_bottom_amp_int");
     signalTree.Write("t_signals");
   }
 
@@ -1589,12 +1538,12 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   s.meanAnodeChargeFC   = Mean(anodeCharges);
   s.rmsAnodeChargeFC    = Rms(anodeCharges, s.meanAnodeChargeFC);
   s.semAnodeChargeFC    = Sem(s.rmsAnodeChargeFC, anodeCharges.size());
-  s.meanCathodeChargeFC = Mean(cathodeCharges);
-  s.rmsCathodeChargeFC  = Rms(cathodeCharges, s.meanCathodeChargeFC);
-  s.semCathodeChargeFC  = Sem(s.rmsCathodeChargeFC, cathodeCharges.size());
-  s.meanCathodeTopChargeFC = Mean(cathodeTopCharges);
-  s.rmsCathodeTopChargeFC  = Rms(cathodeTopCharges, s.meanCathodeTopChargeFC);
-  s.semCathodeTopChargeFC  = Sem(s.rmsCathodeTopChargeFC, cathodeTopCharges.size());
+  s.meanTopChargeFC     = Mean(topCharges);
+  s.rmsTopChargeFC      = Rms(topCharges, s.meanTopChargeFC);
+  s.semTopChargeFC      = Sem(s.rmsTopChargeFC, topCharges.size());
+  s.meanBotChargeFC     = Mean(botCharges);
+  s.rmsBotChargeFC      = Rms(botCharges, s.meanBotChargeFC);
+  s.semBotChargeFC      = Sem(s.rmsBotChargeFC, botCharges.size());
   s.meanChargeRatio     = Mean(chargeRatios);
   s.rmsChargeRatio      = Rms(chargeRatios, s.meanChargeRatio);
   s.semChargeRatio      = Sem(s.rmsChargeRatio, chargeRatios.size());
@@ -1614,9 +1563,9 @@ void WriteSummaryGraphs(const std::vector<DistanceSummary>& sums,
 
   for (std::size_t i = 0; i < n; ++i) {
     x[i]    = sums[i].distanceMm.value_or(static_cast<double>(i));
-    qa[i]   = sums[i].meanAnodeChargeFC;   qaE[i]  = sums[i].semAnodeChargeFC;
-    qc[i]   = sums[i].meanCathodeChargeFC; qcE[i]  = sums[i].semCathodeChargeFC;
-    rat[i]  = sums[i].meanChargeRatio;     ratE[i] = sums[i].semChargeRatio;
+    qa[i]   = sums[i].meanAnodeChargeFC; qaE[i]  = sums[i].semAnodeChargeFC;
+    qc[i]   = sums[i].meanTopChargeFC;   qcE[i]  = sums[i].semTopChargeFC;
+    rat[i]  = sums[i].meanChargeRatio;   ratE[i] = sums[i].semChargeRatio;
     gain[i] = sums[i].meanAvalancheSize;
   }
 
@@ -1634,12 +1583,12 @@ void WriteSummaryGraphs(const std::vector<DistanceSummary>& sums,
 
   auto gAnode   = MakeGraph("g_anode_charge",
     "Mean anode charge;Drift-gap height [mm];Q_{anode} [fC]", qa, qaE, 20);
-  auto gCathode = MakeGraph("g_cathode_charge",
-    "Mean cathode charge;Drift-gap height [mm];Q_{cathode} [fC]", qc, qcE, 21);
+  auto gCathode = MakeGraph("g_thgem_top_charge",
+    "Mean THGEM-top charge;Drift-gap height [mm];Q_{top} [fC]", qc, qcE, 21);
   auto gGain    = MakeGraph("g_avalanche_size",
     "Mean avalanche size;Drift-gap height [mm];N_{e,total}", gain, gainE, 22);
   auto gRatio   = MakeGraph("g_charge_ratio",
-    "Charge ratio;Drift-gap height [mm];Q_{cathode}/Q_{anode}", rat, ratE, 23);
+    "Charge ratio;Drift-gap height [mm];Q_{top}/Q_{anode}", rat, ratE, 23);
 
   TCanvas canvas("c_thgem_summary", "THGEM summary", 2400, 500);
   canvas.Divide(4, 1);
@@ -1659,8 +1608,8 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
 
   f << "source_distance_mm,x_position_cm,n_events,n_interacted,interaction_fraction,"
        "mean_anode_charge_fC,rms_anode_charge_fC,sem_anode_charge_fC,"
-       "mean_cathode_charge_fC,rms_cathode_charge_fC,sem_cathode_charge_fC,"
-       "mean_cathode_top_charge_fC,rms_cathode_top_charge_fC,sem_cathode_top_charge_fC,"
+       "mean_thgem_top_charge_fC,rms_thgem_top_charge_fC,sem_thgem_top_charge_fC,"
+       "mean_thgem_bottom_charge_fC,rms_thgem_bottom_charge_fC,sem_thgem_bottom_charge_fC,"
        "mean_charge_ratio,rms_charge_ratio,sem_charge_ratio,"
        "mean_primary_electrons,mean_avalanche_size\n";
 
@@ -1676,12 +1625,12 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
       << s.meanAnodeChargeFC         << ','
       << s.rmsAnodeChargeFC          << ','
       << s.semAnodeChargeFC          << ','
-      << s.meanCathodeChargeFC       << ','
-      << s.rmsCathodeChargeFC        << ','
-      << s.semCathodeChargeFC        << ','
-      << s.meanCathodeTopChargeFC    << ','
-      << s.rmsCathodeTopChargeFC     << ','
-      << s.semCathodeTopChargeFC     << ','
+      << s.meanTopChargeFC           << ','
+      << s.rmsTopChargeFC            << ','
+      << s.semTopChargeFC            << ','
+      << s.meanBotChargeFC           << ','
+      << s.rmsBotChargeFC            << ','
+      << s.semBotChargeFC            << ','
       << s.meanChargeRatio           << ','
       << s.rmsChargeRatio            << ','
       << s.semChargeRatio            << ','
@@ -1867,12 +1816,20 @@ int main(int argc, char* argv[]) {
     EnsureDirectory("field_cache");
     const std::string fieldCache =
         (fs::path("field_cache") / DeriveFieldCacheName(cfg.geometry, cfg.fields)).string();
-    // The weighting map is keyed by geometry alone (it does not depend on the applied
-    // voltages), so a whole ΔV scan reuses one solve.
-    const std::string wpotCache =
-        (fs::path("field_cache") / DeriveWeightingCacheName(cfg.geometry)).string();
-    const std::size_t expectNodes = static_cast<std::size_t>(cfg.geometry.gridNx) *
-                                    cfg.geometry.gridNx * cfg.geometry.gridNz;
+    // One weighting grid per read-out electrode, keyed by geometry alone (a weighting
+    // field does not depend on the applied voltages), so a whole ΔV scan reuses one solve.
+    const auto GNX = static_cast<std::size_t>(cfg.geometry.gridNx);
+    const auto GNZ = static_cast<std::size_t>(cfg.geometry.gridNz);
+    std::array<std::string, 3> wCaches;
+    std::array<ComponentGrid, 3> wgrids;
+    for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+      wCaches[e] = (fs::path("field_cache") /
+                    DeriveWeightingCacheName(cfg.geometry, kReadoutIds[e])).string();
+      wgrids[e].SetMesh(GNX, GNX, GNZ, -gxy, gxy, -gxy, gxy, g.zAnode, g.zDrift);
+      wgrids[e].EnableMirrorPeriodicityX();
+      wgrids[e].EnableMirrorPeriodicityY();
+    }
+    const std::size_t expectNodes = GNX * GNX * GNZ;
     auto tField = Clock::now();
     bool haveField = false;
     if (fs::exists(fieldCache)) {
@@ -1889,32 +1846,28 @@ int main(int argc, char* argv[]) {
         fs::remove(fieldCache, ec);
       }
     }
-    WeightingMap wmap;
-    if (fs::exists(wpotCache)) {
-      wmap = LoadWeightingMap(wpotCache);
-      if (wmap.valid) {
-        std::cout << "Loading cached anode weighting field from: " << wpotCache << "\n";
+    std::array<bool, 3> haveW{};
+    bool haveAllW = true;
+    for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+      if (fs::exists(wCaches[e]) &&
+          wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true)) {
+        haveW[e] = true;
       } else {
-        std::cout << "  Cached weighting map is incomplete — deleting and regenerating.\n";
-        std::error_code ec;
-        fs::remove(wpotCache, ec);
+        haveAllW = false;
       }
     }
+    if (haveField && haveAllW)
+      std::cout << "Loaded cached electrode weighting fields (anode, THGEM top, bottom).\n";
 
-    // A single neBEM solve serves both maps, so initialise if *either* is missing.
-    // (On a pure cache hit neBEM is never initialised, which is why the weighting map
-    // needs its own cache rather than being queried on demand.)
-    if (!haveField || !wmap.valid) {
-      if (haveField) {
-        std::cout << "\nTransport field was cached but the anode weighting map is not — "
-                  << "solving neBEM once to build it (one-time; cached to "
-                  << wpotCache << ")...\n";
-      } else {
-        std::cout << "\nSolving THGEM field with neBEM and sampling the "
-                  << cfg.geometry.gridNx << "×" << cfg.geometry.gridNx << "×"
-                  << cfg.geometry.gridNz << " transport grid"
-                  << " (one-time; cached to " << fieldCache << ")...\n";
-      }
+    // A single neBEM solve serves the transport field and all three weighting fields,
+    // so initialise if *any* is missing.  (On a pure cache hit neBEM is never
+    // initialised, which is why each weighting field needs its own cache.)
+    if (!haveField || !haveAllW) {
+      std::cout << (haveField
+        ? "\nTransport field was cached but an electrode weighting field is not — "
+          "solving neBEM once to build it...\n"
+        : "\nSolving THGEM field with neBEM and sampling the transport grid "
+          "(one-time; cached)...\n");
       if (!detector.Initialise())
         throw std::runtime_error("neBEM Initialise() failed — try a coarser mesh "
                                  "(larger target_element_size_um / fewer periodic_copies).");
@@ -1928,26 +1881,22 @@ int main(int argc, char* argv[]) {
           throw std::runtime_error("Failed to load freshly sampled transport field: "
                                    + fieldCache);
       }
-      if (!wmap.valid) {
-        std::cout << "  Sampling anode weighting field (" << kMapNx << "×" << kMapNz
-                  << " x–z slice)...\n";
-        SampleWeightingToFile(detector.Component(), g, wpotCache);
-        wmap = LoadWeightingMap(wpotCache);
-        if (!wmap.valid)
-          std::cout << "  Warning: weighting map sample did not read back cleanly; "
-                       "the Weighting Field view will be empty.\n";
+      for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+        if (haveW[e]) continue;
+        std::cout << "  Sampling " << kReadoutIds[e] << " weighting field onto the grid...\n";
+        if (!wgrids[e].SaveWeightingField(&detector.Component(), kReadoutIds[e],
+                                          wCaches[e], "xyz") ||
+            !wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true))
+          throw std::runtime_error("Failed to sample the " + kReadoutIds[e] +
+                                   " weighting field.");
       }
     }
     grid.SetMedium(&gas);   // must follow SetMesh(): SetMesh() calls Reset().
-    std::cout << "  [timing] transport field: "
+    std::cout << "  [timing] transport + weighting fields: "
               << FormatNumber(secsSince(tField), 1) << " s\n";
 
-    // Analytic anode weighting field (parallel-plate induction-gap model).
-    ComponentUser wAnode;
-    SetupAnodeWeighting(wAnode, g);
-
     Sensor sensor;
-    SetupSensor(sensor, grid, wAnode, g, cfg.simulation);
+    SetupSensor(sensor, grid, wgrids, g, cfg.simulation);
 
     // ROOT output.
     TFile rootFile((runDir / "thgem_sim.root").string().c_str(), "RECREATE");
@@ -1958,7 +1907,8 @@ int main(int argc, char* argv[]) {
     TDirectory* fieldDir   = rootFile.mkdir("field");
     auto tDump = Clock::now();
     DumpFieldMap(grid, g, fieldDir);
-    DumpWeightingMap(wmap, g, fieldDir);
+    for (std::size_t e = 0; e < kReadoutIds.size(); ++e)
+      DumpWeightingMap(fieldDir, kReadoutIds[e], wgrids[e], g);
     std::cout << "  [timing] field-map dump: " << FormatNumber(secsSince(tDump), 1) << " s\n";
 
     std::vector<DistanceSummary> allSummaries;
@@ -1993,10 +1943,10 @@ int main(int argc, char* argv[]) {
         summary.xPositionCm = xOpt;
         allSummaries.push_back(summary);
 
-        std::cout << "  ⟨Q_anode⟩     = " << FormatNumber(summary.meanAnodeChargeFC)   << " fC"
+        std::cout << "  ⟨Q_anode⟩     = " << FormatNumber(summary.meanAnodeChargeFC) << " fC"
                   << "  ±" << FormatNumber(summary.semAnodeChargeFC) << " (SEM)\n"
-                  << "  ⟨Q_cathode⟩   = " << FormatNumber(summary.meanCathodeChargeFC) << " fC"
-                  << "  ±" << FormatNumber(summary.semCathodeChargeFC) << " (SEM)\n"
+                  << "  ⟨Q_top/bot⟩   = " << FormatNumber(summary.meanTopChargeFC) << " / "
+                  << FormatNumber(summary.meanBotChargeFC) << " fC (THGEM copper)\n"
                   << "  ⟨avalanche size⟩ = "
                   << FormatNumber(summary.meanAvalancheSize, 0) << " electrons\n";
       }

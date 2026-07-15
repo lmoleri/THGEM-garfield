@@ -188,8 +188,14 @@ single-event run is statistical and may show no avalanche. That is expected phys
 | `gas` | Magboltz mixture, temperature, pressure, Penning, field grid |
 | `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift` (default off), `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
 
-Only the anode is read out. For compatibility with the shared TGC ROOT schema the `cathode`,
-`cathode_top` and amplifier branches still exist but are written as zeros.
+Three electrodes are read out — the anode pad and the two THGEM copper faces (`anode`,
+`thgem_top`, `thgem_bottom`); the drift cathode is not. Each induced signal uses that electrode's
+**true neBEM weighting field**, sampled onto the transport grid and cached per geometry (one solve
+serves all three, reused across a ΔV scan). Physically the anode shows a unipolar collection pulse,
+the top copper a positive induced spike as the avalanche passes, and the bottom copper a bipolar
+signal as charge transits the hole. The Waveforms tab plots all three; the Weighting Field tab has an
+electrode selector. (First run on a new geometry adds a one-time weighting-sampling cost of a few
+minutes, then cached.)
 
 ## Transport bounds (why runs terminate)
 

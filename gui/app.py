@@ -953,7 +953,7 @@ class ResultsPanel(QTabWidget):
         info_form = QFormLayout(info_box)
         info_form.setVerticalSpacing(2)
         self.wave_qa_title_lbl = QLabel("Q anode [fC]:")
-        self.wave_qc_title_lbl = QLabel("Q cathode [fC]:")
+        self.wave_qc_title_lbl = QLabel("Q top [fC]:")
         self.wave_ratio_title_lbl = QLabel("Q ratio:")
         self.wave_qa_lbl    = QLabel("—")
         self.wave_qc_lbl    = QLabel("—")
@@ -1205,6 +1205,12 @@ class ResultsPanel(QTabWidget):
         wf_ctrl = QWidget()
         wf_h = QHBoxLayout(wf_ctrl)
         wf_h.setContentsMargins(0, 0, 0, 0)
+        wf_h.addWidget(QLabel("Electrode:"))
+        self.wf_electrode = QComboBox()
+        self.wf_electrode.addItems(["anode", "thgem_top", "thgem_bottom"])
+        self.wf_electrode.currentIndexChanged.connect(self._redraw_thgem_wfield)
+        wf_h.addWidget(self.wf_electrode)
+        wf_h.addSpacing(12)
         wf_h.addWidget(QLabel("Quantity:"))
         self.wf_quantity = QComboBox()
         self.wf_quantity.addItems(["W (potential)", "|E_w| [1/cm]"])
@@ -1353,14 +1359,14 @@ class ResultsPanel(QTabWidget):
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
 
-        _errplot(axes[0], "mean_anode_charge_fC",       "sem_anode_charge_fC",
+        _errplot(axes[0], "mean_anode_charge_fC",         "sem_anode_charge_fC",
                  "⟨Q_anode⟩ [fC]",            "Anode charge vs distance")
-        _errplot(axes[1], "mean_cathode_charge_fC",     "sem_cathode_charge_fC",
-                 "⟨Q_cathode⟩ [fC]",          "Cathode (readout) vs distance")
-        _errplot(axes[2], "mean_cathode_top_charge_fC", "sem_cathode_top_charge_fC",
-                 "⟨Q_cathode_top⟩ [fC]",      "Cathode-top vs distance")
-        _errplot(axes[3], "mean_charge_ratio",          "sem_charge_ratio",
-                 "Q_cathode / Q_anode",        "Charge ratio vs distance")
+        _errplot(axes[1], "mean_thgem_top_charge_fC",     "sem_thgem_top_charge_fC",
+                 "⟨Q_top⟩ [fC]",              "THGEM top copper vs distance")
+        _errplot(axes[2], "mean_thgem_bottom_charge_fC",  "sem_thgem_bottom_charge_fC",
+                 "⟨Q_bottom⟩ [fC]",           "THGEM bottom copper vs distance")
+        _errplot(axes[3], "mean_charge_ratio",            "sem_charge_ratio",
+                 "Q_top / Q_anode",            "Charge ratio vs distance")
         _errplot(axes[4], "mean_avalanche_size",        None,
                  "⟨Avalanche size⟩",           "Avalanche size vs distance")
         if len(axes) > 5:
@@ -1688,36 +1694,45 @@ class ResultsPanel(QTabWidget):
                     xpos_label = xpos_raw.replace("p", ".").replace("mm", " mm") if sep else "—"
                     try:
                         pa     = f[f"{key}/p_anode_signal"]
-                        pc     = f[f"{key}/p_cathode_signal"]
+                        pc     = f[f"{key}/p_thgem_top_signal"]
                         times  = pa.axis(0).centers()
                         mean_a = pa.values()
                         mean_c = pc.values()
 
                         # std::vector<float> branches → object array of 1D arrays;
                         # np.stack() converts to a proper (n_evt, nBins) 2D array.
+                        # The THGEM top copper maps to the "cathode" display slot; the
+                        # bottom copper is the extra "bottom" channel (third pad).
                         tree    = f[f"{key}/t_signals"]
                         anode   = np.stack(tree["anode"].array(library="np"))
-                        cathode = np.stack(tree["cathode"].array(library="np"))
+                        cathode = np.stack(tree["thgem_top"].array(library="np"))
 
                         data = {
                             "times":   times,
                             "anode":   anode,
                             "cathode": cathode,
+                            "bottom":  np.stack(tree["thgem_bottom"].array(library="np")),
                             "mean_a":  mean_a,
                             "mean_c":  mean_c,
+                            "mean_b":  f[f"{key}/p_thgem_bottom_signal"].values(),
                             "amp_available": False,
                         }
-                        # e⁻/ion component branches (newer ROOT files only)
+                        # e⁻/ion component branches
                         if "anode_e" in tree.keys():
-                            for br in ("anode_e", "anode_i",
-                                       "cathode_e", "cathode_i"):
-                                data[br] = np.stack(tree[br].array(library="np"))
+                            for br, src in (("anode_e", "anode_e"), ("anode_i", "anode_i"),
+                                            ("cathode_e", "thgem_top_e"),
+                                            ("cathode_i", "thgem_top_i"),
+                                            ("bottom_e", "thgem_bottom_e"),
+                                            ("bottom_i", "thgem_bottom_i")):
+                                data[br] = np.stack(tree[src].array(library="np"))
                         # Amplifier-output branches + mean profiles (amplifier runs only)
                         if "anode_amp" in tree.keys():
-                            for br in ("anode_amp", "cathode_amp"):
-                                data[br] = np.stack(tree[br].array(library="np"))
+                            for br, src in (("anode_amp", "anode_amp"),
+                                            ("cathode_amp", "thgem_top_amp"),
+                                            ("bottom_amp", "thgem_bottom_amp")):
+                                data[br] = np.stack(tree[src].array(library="np"))
                             data["mean_a_amp"] = f[f"{key}/p_anode_amp"].values()
-                            data["mean_c_amp"] = f[f"{key}/p_cathode_amp"].values()
+                            data["mean_c_amp"] = f[f"{key}/p_thgem_top_amp"].values()
                             amp_nonzero = (
                                 self._array_has_signal(data["mean_a_amp"])
                                 or self._array_has_signal(data["mean_c_amp"])
@@ -1792,14 +1807,14 @@ class ResultsPanel(QTabWidget):
                 "root_integral_units": "#int V dt [mV#upointns]",
                 "qt_metric_labels": (
                     "Integral anode [mV·ns]:",
-                    "Integral cathode [mV·ns]:",
+                    "Integral top [mV·ns]:",
                     "Integral ratio:",
                 ),
             }
         return {
             "wave_units": "i [fC/ns]",
             "root_integral_units": "Q [fC]",
-            "qt_metric_labels": ("Q anode [fC]:", "Q cathode [fC]:", "Q ratio:"),
+            "qt_metric_labels": ("Q anode [fC]:", "Q top [fC]:", "Q ratio:"),
         }
 
     def _select_display_series(self, data: dict, evt_idx: int) -> dict:
@@ -1809,16 +1824,20 @@ class ResultsPanel(QTabWidget):
                 "amp_mode": True,
                 "anode": data["anode_amp"][evt_idx].astype("f8"),
                 "cathode": data["cathode_amp"][evt_idx].astype("f8"),
+                "bottom": data["bottom_amp"][evt_idx].astype("f8"),
                 "mean_a": data["mean_a_amp"].astype("f8"),
                 "mean_c": data["mean_c_amp"].astype("f8"),
+                "mean_b": np.zeros_like(data["mean_a_amp"], dtype="f8"),
                 **self._display_label_meta(True),
             }
         return {
             "amp_mode": False,
             "anode": data["anode"][evt_idx].astype("f8"),
             "cathode": data["cathode"][evt_idx].astype("f8"),
+            "bottom": data["bottom"][evt_idx].astype("f8"),
             "mean_a": data["mean_a"].astype("f8"),
             "mean_c": data["mean_c"].astype("f8"),
+            "mean_b": data["mean_b"].astype("f8"),
             **self._display_label_meta(False),
         }
 
@@ -1977,7 +1996,7 @@ class ResultsPanel(QTabWidget):
                 "_root_canvas", "tgc_waveforms", "THGEM Waveforms", 950, 700)
 
             self._root_canvas.Clear()
-            self._root_canvas.Divide(1, 2)
+            self._root_canvas.Divide(1, 3)
             self._root_objects.clear()   # release previous objects
 
             def _draw_pad(pad_idx: int, y_evt: np.ndarray, y_mean: np.ndarray,
@@ -2017,10 +2036,16 @@ class ResultsPanel(QTabWidget):
                 leg.Draw()
                 self._root_objects.extend([ga, gm, leg])
 
-            _draw_pad(1, anode,   mean_a, "Anode",   ROOT.kBlue + 1,
+            bottom    = series.get("bottom")
+            bottom_e  = data["bottom_e"][evt_idx].astype("f8") if split and "bottom_e" in data else None
+            bottom_i  = data["bottom_i"][evt_idx].astype("f8") if split and "bottom_e" in data else None
+            _draw_pad(1, anode,   mean_a, "Anode",       ROOT.kBlue + 1,
                       anode_e, anode_i)
-            _draw_pad(2, cathode, mean_c, "Cathode", ROOT.kRed  + 1,
+            _draw_pad(2, cathode, mean_c, "THGEM top",   ROOT.kRed  + 1,
                       cathode_e, cathode_i)
+            if bottom is not None:
+                _draw_pad(3, bottom, series.get("mean_b"), "THGEM bottom",
+                          ROOT.kOrange + 7, bottom_e, bottom_i)
 
             self._root_canvas.Update()
 
@@ -2642,11 +2667,13 @@ class ResultsPanel(QTabWidget):
             f.Close()
         self._redraw_thgem_field()
 
-    def load_thgem_wfield(self, root_path: str):
-        """Load the neBEM anode weighting map (field/h_wpot, …) from the run ROOT file.
+    _WF_ELECTRODES = ("anode", "thgem_top", "thgem_bottom")
 
-        Runs produced before the weighting solve existed simply have no such objects;
-        the tab then stays empty rather than raising.
+    def load_thgem_wfield(self, root_path: str):
+        """Load the neBEM weighting maps for all three electrodes (field/h_wpot_<id>, …).
+
+        Runs produced before the per-electrode weighting solve existed simply have no
+        such objects; the tab then stays empty rather than raising.
         """
         try:
             import ROOT  # noqa: PLC0415
@@ -2656,25 +2683,29 @@ class ResultsPanel(QTabWidget):
         if not f or f.IsZombie():
             return
         try:
-            hw  = f.Get("field/h_wpot")
-            hwe = f.Get("field/h_wfield_mag")
-            gw  = f.Get("field/g_axis_wpot")
-            if not hw:
-                # Older run: clear any map still shown from a previously loaded run,
-                # so the tab never displays another run's weighting field.
+            maps = {}
+            for eid in self._WF_ELECTRODES:
+                hw = f.Get(f"field/h_wpot_{eid}")
+                if not hw:
+                    continue
+                hwe = f.Get(f"field/h_wfield_mag_{eid}")
+                gw  = f.Get(f"field/g_axis_wpot_{eid}")
+                maps[eid] = dict(
+                    wpot=self._clone_root(hw),
+                    wmag=self._clone_root(hwe) if hwe else None,
+                    axW=self._clone_root(gw) if gw else None)
+            if not maps:
+                # Older run: clear any map still shown from a previously loaded run.
                 self._thgem_wfield = None
                 self._wfield_objects.clear()
                 if self._wfield_root_canvas is not None:
                     self._wfield_root_canvas.Clear()
                     self._wfield_root_canvas.Update()
                 self.append_log(
-                    "[GUI] This run has no weighting map — re-run to populate "
+                    "[GUI] This run has no weighting maps — re-run to populate "
                     "the Weighting Field tab.")
                 return
-            self._thgem_wfield = dict(
-                wpot=self._clone_root(hw),
-                wmag=self._clone_root(hwe) if hwe else None,
-                axW=self._clone_root(gw) if gw else None)
+            self._thgem_wfield = maps
         finally:
             f.Close()
         self._redraw_thgem_wfield()
@@ -2848,15 +2879,18 @@ class ResultsPanel(QTabWidget):
             self.append_log(f"[GUI] E-field canvas error: {exc}")
 
     def _redraw_thgem_wfield(self):
-        d = self._thgem_wfield
-        if not d:
+        maps = self._thgem_wfield
+        if not maps:
             return
+        eid = self.wf_electrode.currentText()
+        d = maps.get(eid) or next(iter(maps.values()))   # fall back to any available
         want_mag = self.wf_quantity.currentIndex() == 1
         h2   = d["wmag"] if want_mag else d["wpot"]
         prof = None if want_mag else d["axW"]
         try:
             self._draw_field_canvas(
-                "_wfield_root_canvas", "thgem_wfield", "THGEM Anode Weighting Field",
+                "_wfield_root_canvas", "thgem_wfield",
+                f"THGEM {eid} Weighting Field",
                 h2, prof, self.wf_cmap.currentText(), self._wfield_objects)
         except Exception as exc:  # noqa: BLE001
             self.append_log(f"[GUI] Weighting-field canvas error: {exc}")
