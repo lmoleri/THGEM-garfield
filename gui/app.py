@@ -529,6 +529,30 @@ class ConfigPanel(QScrollArea):
         sim_form.addRow("Random seed",        self.random_seed)
         root_layout.addWidget(sim_box)
 
+        # ── Amplifier (front-end electronics) ──────────────────────────────
+        amp_box  = QGroupBox("Amplifier (front-end)")
+        amp_form = self._left_form_layout(amp_box)
+        self.amp_enable = QCheckBox()
+        self.amp_enable.setChecked(False)
+        self.amp_enable.setToolTip(
+            "Pass each electrode's induced current through a CIVIDEC C2-TCT broadband\n"
+            "transimpedance amplifier to get a shaped output voltage [mV]. The\n"
+            "Waveforms tab then offers an 'Amplifier' display mode.")
+        self.amp_gain      = self._dspin(0.0, 80.0, 1.0, 1, 40.0)
+        self.amp_gain.setToolTip("Voltage gain [dB] (40 dB = ×100).")
+        self.amp_zin       = self._dspin(1.0, 10000.0, 10.0, 1, 50.0)
+        self.amp_zin.setToolTip("Input impedance [Ω] (transimpedance I→V scale).")
+        self.amp_bw_high   = self._dspin(1e6, 1e11, 1e8, 0, 2.0e9)
+        self.amp_bw_high.setToolTip("Upper −3 dB bandwidth [Hz] → intrinsic low-pass.")
+        self.amp_sample_ns = self._dspin(0.0, 100.0, 0.5, 2, 0.0)
+        self.amp_sample_ns.setToolTip("Acquisition aperture / boxcar average [ns] (0 = off).")
+        amp_form.addRow("Enable",               self.amp_enable)
+        amp_form.addRow("Gain [dB]",            self.amp_gain)
+        amp_form.addRow("Input impedance [Ω]",  self.amp_zin)
+        amp_form.addRow("Bandwidth high [Hz]",  self.amp_bw_high)
+        amp_form.addRow("Output sample [ns]",   self.amp_sample_ns)
+        root_layout.addWidget(amp_box)
+
         # ── Output ────────────────────────────────────────────────────────
         out_box  = QGroupBox("Output")
         out_form = self._left_form_layout(out_box)
@@ -721,6 +745,13 @@ class ConfigPanel(QScrollArea):
                 "max_ions_drifted":   self.max_ions_drifted.value(),
                 "random_seed":        self.random_seed.value(),
             },
+            "amplifier": {
+                "enable":              self.amp_enable.isChecked(),
+                "gain_db":             self.amp_gain.value(),
+                "input_impedance_ohm": self.amp_zin.value(),
+                "bandwidth_high_hz":   self.amp_bw_high.value(),
+                "output_sample_ns":    self.amp_sample_ns.value(),
+            },
         }
 
     def load_from_dict(self, d: dict):
@@ -796,6 +827,13 @@ class ConfigPanel(QScrollArea):
         self.ion_time_window.setValue(   sim.get("ion_time_window_ns", 1.0e6))
         self.max_ions_drifted.setValue(  int(sim.get("max_ions_drifted", 200)))
         self.random_seed.setValue(       int(sim.get("random_seed", 0)))
+
+        amp = d.get("amplifier", {})
+        self.amp_enable.setChecked(bool(amp.get("enable", False)))
+        self.amp_gain.setValue(      amp.get("gain_db", 40.0))
+        self.amp_zin.setValue(       amp.get("input_impedance_ohm", 50.0))
+        self.amp_bw_high.setValue(   amp.get("bandwidth_high_hz", 2.0e9))
+        self.amp_sample_ns.setValue( amp.get("output_sample_ns", 0.0))
 
 
 # ---------------------------------------------------------------------------

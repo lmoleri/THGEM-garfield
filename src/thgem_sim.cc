@@ -188,6 +188,16 @@ struct SimulationConfig {
   int         randomSeed       = 0;
 };
 
+// Front-end amplifier (CIVIDEC C2-TCT broadband transimpedance current amp): turns a
+// binned induced current [fC/ns ≡ µA] into an output voltage [mV].  Datasheet defaults.
+struct AmplifierConfig {
+  bool   enable            = false;
+  double gainDb            = 40.0;    // voltage gain [dB] (40 dB = ×100)
+  double inputImpedanceOhm = 50.0;    // input impedance [Ω]
+  double bandwidthHighHz   = 2.0e9;   // upper −3 dB edge → low-pass τ = 1/(2π f)
+  double outputSampleNs    = 0.0;     // finite acquisition aperture / boxcar [ns]
+};
+
 // ─── 3D-visualisation display limits ─────────────────────────────────────────
 constexpr std::size_t kMaxDispIonPaths      = 100;  // ion drift paths saved per event
 constexpr std::size_t kMaxDispCloudPts      = 500;  // avalanche-cloud points saved per event
@@ -212,6 +222,7 @@ struct Config {
   SourceConfig     source;
   GasConfig        gas;
   SimulationConfig simulation;
+  AmplifierConfig  amplifier;
 };
 
 // ─── Per-distance summary ─────────────────────────────────────────────────────
@@ -511,6 +522,14 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
     cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
     cfg.simulation.randomSeed       = ReadInt   (*s, "simulation", "random_seed",        cfg.simulation.randomSeed);
+  }
+
+  if (const auto* a = FindSection(root, "amplifier")) {
+    cfg.amplifier.enable            = ReadBool  (*a, "amplifier", "enable",             cfg.amplifier.enable);
+    cfg.amplifier.gainDb            = ReadDouble(*a, "amplifier", "gain_db",            cfg.amplifier.gainDb);
+    cfg.amplifier.inputImpedanceOhm = ReadDouble(*a, "amplifier", "input_impedance_ohm", cfg.amplifier.inputImpedanceOhm);
+    cfg.amplifier.bandwidthHighHz   = ReadDouble(*a, "amplifier", "bandwidth_high_hz",  cfg.amplifier.bandwidthHighHz);
+    cfg.amplifier.outputSampleNs    = ReadDouble(*a, "amplifier", "output_sample_ns",   cfg.amplifier.outputSampleNs);
   }
 
   // ── Validation ───────────────────────────────────────────────────────────────
@@ -1088,6 +1107,50 @@ void SetupSensor(Sensor& sensor, ComponentGrid& grid,
   sensor.SetArea(-xy, -xy, g.zAnode, xy, xy, g.zDrift);
 }
 
+// ─── Front-end amplifier (ported from tgc_sim) ────────────────────────────────
+// One-pole RC low-pass, applied in place: y[k] = b·y[k−1] + (1−b)·x[k], b = e^{−Δt/τ}.
+void ApplyOnePoleLowPass(std::vector<double>& x, const double dtNs, const double tauNs) {
+  if (tauNs <= 0.) return;
+  const double b = std::exp(-dtNs / tauNs);
+  double y = 0.;
+  for (auto& s : x) { y = b * y + (1. - b) * s; s = y; }
+}
+
+// Centred boxcar average over a finite acquisition aperture (no-op if window ≤ Δt).
+void ApplyBoxcarAverage(std::vector<double>& x, const double dtNs, const double windowNs) {
+  if (windowNs <= dtNs || x.empty()) return;
+  const std::size_t nWin =
+      std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(windowNs / dtNs)));
+  if (nWin <= 1) return;
+  std::vector<double> prefix(x.size() + 1, 0.);
+  for (std::size_t i = 0; i < x.size(); ++i) prefix[i + 1] = prefix[i] + x[i];
+  const std::size_t left = (nWin - 1) / 2, right = nWin / 2;
+  std::vector<double> y(x.size(), 0.);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    const std::size_t lo = i > left ? i - left : 0;
+    const std::size_t hi = std::min(x.size() - 1, i + right);
+    y[i] = (prefix[hi + 1] - prefix[lo]) / static_cast<double>(hi + 1 - lo);
+  }
+  x.swap(y);
+}
+
+// Pass a binned induced current i [fC/ns ≡ µA] through the transimpedance amplifier and
+// return the output voltage [mV].  The CIVIDEC C2-TCT follows the input current within its
+// band (no differentiation): apply the intrinsic upper-bandwidth low-pass, the gain·R_in
+// (I→V) scale, then an optional output aperture.  A conductive THGEM pad has no input-cap
+// current sink, so (unlike a resistive readout) there is no extra input low-pass.
+std::vector<double> AmplifierOutputMv(const std::vector<double>& iFcNs, const double dtNs,
+                                      const AmplifierConfig& amp) {
+  const double gain = std::pow(10., amp.gainDb / 20.);          // dB → linear voltage gain
+  const double tauLpHighNs = 1e9 / (2. * M_PI * amp.bandwidthHighHz);
+  const double mvPerFcPerNs = gain * amp.inputImpedanceOhm * 1e-3;  // i[µA]·gain·R → mV
+  std::vector<double> v(iFcNs);
+  ApplyOnePoleLowPass(v, dtNs, tauLpHighNs);
+  for (auto& s : v) s *= mvPerFcPerNs;
+  ApplyBoxcarAverage(v, dtNs, amp.outputSampleNs);
+  return v;
+}
+
 // ─── Per-distance simulation loop ─────────────────────────────────────────────
 
 DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
@@ -1462,6 +1525,31 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     const double qTop   =  rawTop   * sim.timeStepNs * nPrimary;  // [fC]
     const double qBot   =  rawBot   * sim.timeStepNs * nPrimary;  // [fC]
 
+    // Front-end amplifier: shape each channel's induced current [fC/ns] into an
+    // output voltage [mV], plus its running integral [mV·ns].
+    if (cfg.amplifier.enable) {
+      std::vector<double> ia(nBins), it(nBins), ib(nBins);
+      for (std::size_t k = 0; k < nBins; ++k) {
+        ia[k] = bufA[k] * nPrimary; it[k] = bufT[k] * nPrimary; ib[k] = bufB[k] * nPrimary;
+      }
+      const auto va = AmplifierOutputMv(ia, sim.timeStepNs, cfg.amplifier);
+      const auto vt = AmplifierOutputMv(it, sim.timeStepNs, cfg.amplifier);
+      const auto vb = AmplifierOutputMv(ib, sim.timeStepNs, cfg.amplifier);
+      double ca = 0., ct = 0., cb = 0.;
+      for (std::size_t k = 0; k < nBins; ++k) {
+        ca += va[k] * sim.timeStepNs; ct += vt[k] * sim.timeStepNs; cb += vb[k] * sim.timeStepNs;
+        anodeAmp[k]    = static_cast<float>(va[k]);
+        topAmp[k]      = static_cast<float>(vt[k]);
+        botAmp[k]      = static_cast<float>(vb[k]);
+        anodeAmpInt[k] = static_cast<float>(ca);
+        topAmpInt[k]   = static_cast<float>(ct);
+        botAmpInt[k]   = static_cast<float>(cb);
+        const double t = (static_cast<double>(k) + 0.5) * sim.timeStepNs;
+        pAnodeAmp.Fill(t, va[k]); pTopAmp.Fill(t, vt[k]); pBotAmp.Fill(t, vb[k]);
+        pAnodeAmpInt.Fill(t, ca); pTopAmpInt.Fill(t, ct); pBotAmpInt.Fill(t, cb);
+      }
+    }
+
     evtId = static_cast<int>(ev);
     evtQa = static_cast<float>(qAnode);
     evtQt = static_cast<float>(qTop);
@@ -1712,6 +1800,13 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
       {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
       {"random_seed",        cfg.simulation.randomSeed}
+    }},
+    {"amplifier", {
+      {"enable",              cfg.amplifier.enable},
+      {"gain_db",             cfg.amplifier.gainDb},
+      {"input_impedance_ohm", cfg.amplifier.inputImpedanceOhm},
+      {"bandwidth_high_hz",   cfg.amplifier.bandwidthHighHz},
+      {"output_sample_ns",    cfg.amplifier.outputSampleNs}
     }}
   };
 }

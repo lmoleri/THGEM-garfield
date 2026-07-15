@@ -197,6 +197,11 @@ signal as charge transits the hole. The Waveforms tab plots all three; the Weigh
 electrode selector. (First run on a new geometry adds a one-time weighting-sampling cost of a few
 minutes, then cached.)
 
+An optional **front-end amplifier** (`amplifier` config section: `enable`, `gain_db`,
+`input_impedance_ohm`, `bandwidth_high_hz`, `output_sample_ns`) passes each electrode's induced
+current through a CIVIDEC C2-TCT broadband transimpedance model into an output voltage [mV]; the
+Waveforms tab then offers an **Amplifier** display mode.
+
 ## Transport bounds (why runs terminate)
 
 Two independent safeguards keep a run from hanging or exhausting memory, because a charge can stall
