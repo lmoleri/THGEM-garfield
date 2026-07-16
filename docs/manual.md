@@ -530,9 +530,11 @@ project root.
   Meth. A **386** (1997) 531–534,
   [doi:10.1016/S0168-9002(96)01172-2](https://doi.org/10.1016/S0168-9002(96)01172-2). The
   amplification concept a THGEM thickens.
-- **THGEM** — A. Breskin *et al.*, *A concise review on THGEM detectors*, Nucl. Instrum. Meth. A
-  **598** (2009) 107–111, [doi:10.1016/j.nima.2008.08.062](https://doi.org/10.1016/j.nima.2008.08.062)
-  ([arXiv:0807.2026](https://arxiv.org/abs/0807.2026)). The operating regime this code models.
+- **THGEM** — S. Bressler, L. Moleri, A. Jash, A. Tesi and D. Zavazieva, *The Thick Gas Electron
+  Multiplier and its derivatives: Physics, technologies and applications*, Prog. Part. Nucl. Phys.
+  **130** (2023) 104029, [doi:10.1016/j.ppnp.2023.104029](https://doi.org/10.1016/j.ppnp.2023.104029)
+  ([arXiv:2303.01083](https://arxiv.org/abs/2303.01083)). Comprehensive THGEM review — the physics,
+  technology and operating regime this code models.
 - **Shockley–Ramo theorem** — W. Shockley, *Currents to Conductors Induced by a Moving Point Charge*,
   J. Appl. Phys. **9** (1938) 635, [doi:10.1063/1.1710367](https://doi.org/10.1063/1.1710367); and
   S. Ramo, *Currents Induced by Electron Motion*, Proc. IRE **27** (1939) 584–585,
