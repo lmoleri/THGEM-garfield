@@ -10,6 +10,9 @@ schema. It is a port of the sibling [tgc-garfield](https://github.com/lmoleri/tg
 Gap Chamber) project: the gas, avalanche, signal, track and I/O machinery is shared, while the
 field engine was rebuilt — a wire chamber has an analytic field, a hole multiplier does not.
 
+📖 A detailed code-and-physics walkthrough for students — the Garfield++ methods, the simulation
+pipeline, the numerical subtleties, and the ROOT output schema — is in [`docs/manual.md`](docs/manual.md).
+
 > **Status:** working and verified end-to-end — field solve, multiplying avalanche (realistic
 > gain), bounded ion drift, and the GUI. A ΔV≈1400 V run on the hole axis multiplies to ⟨~10³⟩
 > electrons and induces a non-zero anode charge in a few seconds. The GUI's **3D Tracks** view
@@ -65,6 +68,8 @@ here. Instead:
 3. The sampler writes an **in-solid flag** per node, so `ComponentGrid::GetMedium` returns `null`
    inside the copper and dielectric and electrons are absorbed on contact. Without this a
    `ComponentGrid` has no material information and charges would drift straight through metal.
+   (Charge is *collected* at the anode and drift cathode by a separate mechanism — the inset
+   drift-area z-bounds — see [Transport bounds](#transport-bounds-why-runs-terminate).)
 4. The **signal** on each of the three readout electrodes — the anode pad and the two THGEM copper
    faces — comes from that electrode's **true Shockley–Ramo weighting field _and potential_, solved by
    neBEM** (each solid is labelled, so 1 V is placed on it and 0 V on all others) and sampled onto the
@@ -107,9 +112,10 @@ The GUI's **3D Tracks** tab renders one event in a ROOT 3D canvas, in true z-sca
 - **Geometry** — an N×N block of hole cylinders (orange), the copper/dielectric plate faces (grey),
   and the drift (cyan) and anode (red) equipotential planes.
 - **Charges** — the primary electron's drift line (blue); the avalanche both as orange birth-point
-  markers *and* as semi-transparent orange **transport trajectories** of the secondary electrons;
-  and, when ion drift is enabled, the ion paths colour-coded by destination — green (→ drift
-  cathode), magenta (→ anode), grey (absorbed).
+  markers *and* as semi-transparent orange **transport trajectories** of the secondary electrons,
+  which fan out across the induction gap and terminate cleanly on the anode (they are collected
+  there, so no track slides along the readout plane); and, when ion drift is enabled, the ion paths
+  colour-coded by destination — green (→ drift cathode), magenta (→ anode), grey (absorbed).
 - **Controls** — Distance / X-pos / Event selectors; orientation presets (`Gap XY`, `Top XZ`,
   `Side YZ`, `3D`) with zoom and pan; a **Holes** spinbox (1–15, default 4 → a 4×4 block); and an
   **Aval paths** spinbox (0–200, default 50) capping how many avalanche trajectories are drawn
@@ -175,14 +181,15 @@ Summary / Plots / Waveforms / Integrals / [3D Tracks](#3d-tracks-view) / E-Field
 Each run also prints a **primary-electron fate** line per source height, e.g.
 
 ```
-  [fate] multiplied 25/30 events; primary endpoint: {attached @ in-hole: 6} {outside time window @ below-plate: 24}
+  [fate] multiplied 27/30 events; primary endpoint: {attached @ in-hole: 5} {left drift area @ below-plate: 25}
 ```
 
 `multiplied N/M` is how many events produced an avalanche; the `{status @ zone}` tally shows where
-and why each primary ended (`zone` ∈ `in-hole` / `on-plate` / `in-gap` / `below-plate`). It is a
-collection-efficiency and attachment readout: at the default ΔV≈1400 V about **85 %** of electrons
-multiply, and the rest either **attach** in the hole (CO₂) or are collected on the copper — so a
-single-event run is statistical and may show no avalanche. That is expected physics, not a bug.
+and why each primary ended (`zone` ∈ `in-gap` / `in-hole` / `in-plate` / `below-plate`). It is a
+collection-efficiency and attachment readout: at the default ΔV≈1400 V most primaries drift through
+the hole and are **collected at the anode** (`left drift area @ below-plate`), while the rest
+**attach** in the hole (CO₂) or are absorbed on the copper — so a single-event run is statistical and
+may show no avalanche. That is expected physics, not a bug.
 
 ## Configuration
 
@@ -214,12 +221,18 @@ Waveforms tab then offers an **Amplifier** display mode.
 
 ## Transport bounds (why runs terminate)
 
-Two independent safeguards keep a run from hanging or exhausting memory, because a charge can stall
-at a field feature and neither drifter is otherwise bounded from outside:
+A charge is normally removed the instant it reaches an electrode; two further safeguards keep a run
+from hanging or exhausting memory if a charge instead stalls at a field feature:
 
-- **Electron avalanche** — `AvalancheMicroscopic::SetTimeWindow(0, time_window_ns)` bounds transport
-  in time. (`Sensor::SetTimeWindow` only bins the induced signal; it does not stop transport.) A
-  charge still in flight at the window's end terminates as `StatusOutsideTimeWindow`.
+- **Electrode collection (primary stop)** — the `Sensor` drift area is inset one transport-grid cell
+  in z (`SetArea(…, zAnode + zMargin, …, zDrift − zMargin)`), so an electron reaching the anode (or an
+  ion the drift cathode) steps outside the area and terminates as `StatusLeftDriftArea`. The inset
+  matters: with `zmin` exactly at `zAnode` the interpolated field in the last grid cell is too weak to
+  push the electron across the boundary, so it hovers ~one cell above the anode and diffuses sideways
+  along it for the whole time window — the "anode-slide" that produced spurious 3D-track lines.
+- **Electron time window** — `AvalancheMicroscopic::SetTimeWindow(0, time_window_ns)` is the backstop
+  that bounds transport *in time* for a stalled charge. (`Sensor::SetTimeWindow` only bins the induced
+  signal; it does not stop transport.) Such a charge terminates as `StatusOutsideTimeWindow`.
 - **Ion drift** — uses **`AvalancheMC`** (Monte-Carlo, distance-stepped), *not* `DriftLineRKF`. The
   RKF integrator has no step-count or time bound, so a single ion looping near a field stagnation
   point runs forever with unbounded path storage (the earlier hang/OOM). `AvalancheMC` steps by a
