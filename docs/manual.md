@@ -26,6 +26,7 @@ number, so the references survive edits — open `src/thgem_sim.cc` and search.
 12. [Numerical subtleties](#12-numerical-subtleties-consolidated)
 13. [Building, running & extending](#13-building-running--extending)
 14. [References](#14-references)
+15. [Code-element reference](#15-code-element-reference)
 
 ---
 
@@ -49,6 +50,14 @@ The binary `thgem_sim` computes, for a given geometry and set of fields:
 Everything is driven by one JSON config, shared with the PyQt5 GUI (`gui/app.py`). Units in the code
 are Garfield's native **cm, V, ns, fC** unless a variable name says otherwise (config inputs are in
 µm/mm/kV·cm⁻¹/keV and are converted on load).
+
+**Code-element notation.** Code identifiers stay in `code`; a coloured badge marks the *kind* of
+element wherever the distinction is useful — 🟦 external library API (Garfield / ROOT / Qt), 🟩 custom
+class/struct, 🟧 custom function/constant, 🟨 config parameter (JSON key), 🟪 ROOT output name
+(branch/object). Badges appear in the reference tables (§3–§4, §9–§10); the full
+**[Code-element reference](#15-code-element-reference)** (§15) classifies every identifier used in this
+manual with a one-line gloss. Running prose leaves identifiers unbadged for readability — use §15 as
+the key.
 
 ---
 
@@ -85,17 +94,17 @@ The observables the code produces: **gain**, **collection efficiency / fate**, a
 
 ## 3. The Garfield++ toolchain
 
-The simulation is assembled from Garfield++ components. Each does one job:
+The simulation is assembled from Garfield++ components (all 🟦 external library API). Each does one job:
 
 | Class | Role in this code | Why it is used |
 |---|---|---|
-| `MediumMagboltz` | Gas medium; holds the transport/rate tables. Built in `SetupGas`. | Provides $\alpha$, $\eta$, drift, diffusion vs. field, and the microscopic collision-rate table. |
-| `ComponentNeBem3d` | Boundary-element field solver for **one periodic cell**. Built in `ThgemDetector`. | A drilled hole has no closed-form field and no external FEM mesh is wanted; neBEM is Garfield-native. |
-| `ComponentGrid` | Fast field on a regular mesh (trilinear interpolation). One for transport + one per weighting electrode. | Direct neBEM lookups are ~10³× too slow to drive an avalanche; sample once, interpolate forever, cache to disk. |
-| `AvalancheMicroscopic` | Microscopic electron transport (collision by collision) and the avalanche. | Needed for realistic multiplication and per-step induced signals in a strongly non-uniform field. |
-| `AvalancheMC` | Monte-Carlo, distance-stepped **ion** drift. | Bounded by construction (unlike `DriftLineRKF`); see §8. |
-| `Sensor` | Ties the transport field + the weighting electrodes together; bins the induced signal; defines the drift area. | Central hub the avalanche/ion drifters read from and write signals to. |
-| `TrackHeed` | **Not used.** | Primaries are the $N=E/W$ point deposit of §2, not a Heed cluster model. |
+| 🟦 `MediumMagboltz` | Gas medium; holds the transport/rate tables. Built in `SetupGas`. | Provides $\alpha$, $\eta$, drift, diffusion vs. field, and the microscopic collision-rate table. |
+| 🟦 `ComponentNeBem3d` | Boundary-element field solver for **one periodic cell**. Built in `ThgemDetector`. | A drilled hole has no closed-form field and no external FEM mesh is wanted; neBEM is Garfield-native. |
+| 🟦 `ComponentGrid` | Fast field on a regular mesh (trilinear interpolation). One for transport + one per weighting electrode. | Direct neBEM lookups are ~10³× too slow to drive an avalanche; sample once, interpolate forever, cache to disk. |
+| 🟦 `AvalancheMicroscopic` | Microscopic electron transport (collision by collision) and the avalanche. | Needed for realistic multiplication and per-step induced signals in a strongly non-uniform field. |
+| 🟦 `AvalancheMC` | Monte-Carlo, distance-stepped **ion** drift. | Bounded by construction (unlike `DriftLineRKF`); see §8. |
+| 🟦 `Sensor` | Ties the transport field + the weighting electrodes together; bins the induced signal; defines the drift area. | Central hub the avalanche/ion drifters read from and write signals to. |
+| 🟦 `TrackHeed` | **Not used.** | Primaries are the $N=E/W$ point deposit of §2, not a Heed cluster model. |
 
 Not part of Garfield: a vendored `nlohmann/json` single header (`third_party/`) for config parsing,
 and ROOT for all output and the GUI canvases.
@@ -104,7 +113,8 @@ and ROOT for all output and the GUI canvases.
 
 ## 4. Code map & pipeline
 
-`src/thgem_sim.cc` (~2000 lines, C++20) is organized by `─── section ───` banners:
+`src/thgem_sim.cc` (~2000 lines, C++20) is organized by `─── section ───` banners. The *Key symbols*
+below are 🟩 custom classes/structs and 🟧 custom functions/constants (full list in §15):
 
 | Section | Key symbols | What it does |
 |---|---|---|
@@ -335,7 +345,7 @@ drifter is not otherwise bounded from outside.
 ## 9. ROOT output schema
 
 Each run writes `thgem_sim.root`, `summary.csv`, and a resolved `run_config.json` into a timestamped
-subfolder of `--out`.
+subfolder of `--out`. Every ROOT object named below is a 🟪 ROOT output name (full list in §15).
 
 **`field/` (once per run)** — the neBEM maps for the E-Field / Weighting tabs:
 
@@ -372,7 +382,8 @@ mean/rms/sem_charge_ratio, mean_primary_electrons, mean_avalanche_size`.
 
 ## 10. Configuration reference
 
-One JSON file, mirrored by the `Config` structs (§4). Config units are converted to Garfield units on
+Every key below is a 🟨 config parameter (JSON key). One JSON file, mirrored by the `Config` structs
+(§4). Config units are converted to Garfield units on
 load.
 
 **`geometry`** — `hole_diameter_um`, `hole_pitch_um` (square array), `plate_thickness_um` (dielectric),
@@ -533,3 +544,147 @@ project root.
 - **CIVIDEC C2-TCT** — CIVIDEC Instrumentation, *C2-TCT broadband transimpedance amplifier*
   (10 kHz – 2 GHz, 40 dB), <https://cividec.at/electronics-C2-TCT.html>. The front-end model in
   `AmplifierOutputMv`.
+
+---
+
+## 15. Code-element reference
+
+Every code identifier used in this manual, classified. Badge key: 🟦 external library API
+(Garfield / ROOT / Qt) · 🟩 custom class/struct · 🟧 custom function/constant · 🟨 config parameter
+(JSON key) · 🟪 ROOT output name. Custom elements live in `src/thgem_sim.cc` unless marked *(GUI)*
+(`gui/app.py`).
+
+### 🟦 External library API — types
+
+| Symbol | Role |
+|---|---|
+| `MediumMagboltz` | Gas medium; holds the transport/rate tables |
+| `MediumConductor` | Copper (conductor) medium |
+| `MediumPlastic` | FR4 / Kapton dielectric medium |
+| `ComponentNeBem3d` | Boundary-element field solver for one periodic cell |
+| `ComponentGrid` | Sampled field on a regular mesh; fast interpolation |
+| `GeometrySimple` | Container holding the solids handed to neBEM |
+| `SolidBox` | Box solid — drift-cathode and anode patches |
+| `SolidHole` | Drilled-hole solid — the two copper layers + dielectric |
+| `Solid` | Base class of the geometry primitives |
+| `Sensor` | Field + electrode hub; bins signals; defines the drift area |
+| `AvalancheMicroscopic` | Microscopic electron transport and the avalanche |
+| `AvalancheMC` | Monte-Carlo, distance-stepped ion drift |
+| `TrackHeed` | Heed primary-ionisation model — **not used** (§3) |
+| `DriftLineRKF` | RKF drift-line integrator — rejected for ions (§8) |
+| `TTree` | ROOT per-event tree |
+| `TProfile` | ROOT mean-vs-time profile histogram |
+| `TCanvas` | ROOT drawing canvas (GUI views) |
+| `QThread` | Qt worker thread — base of `SimRunner` *(GUI)* |
+| `QTabWidget` | Qt tabbed container — base of `ResultsPanel` *(GUI)* |
+| `QScrollArea` | Qt scroll container — base of `ConfigPanel` *(GUI)* |
+
+### 🟦 External library API — methods & status codes
+
+| Symbol | Role |
+|---|---|
+| `AvalancheElectron` | Transport one electron and its avalanche |
+| `GetAvalancheSize` | Electron / ion count of the avalanche |
+| `GetSignal` · `GetElectronSignal` · `GetIonSignal` | Induced current per time bin (total / e⁻ / ion) |
+| `DriftIon` | Drift one ion (`AvalancheMC`) |
+| `SetArea` · `IsInArea` | Define / test the drift bounding box (§8) |
+| `SetTimeWindow` | Transport bound (avalanche) or signal binning (sensor) |
+| `UseWeightingPotential` | Integrate the signal from *W*, not **E**_w (§6) |
+| `LoadElectricField` | Load a sampled grid (+ potential, + in-solid flag) |
+| `AddElectrode` | Register a weighting electrode on the sensor |
+| `SetLabel` | Label a solid so neBEM solves its weighting field |
+| `SetPeriodicityX` · `SetPeriodicityY` | Tile the cell in the neBEM solve |
+| `EnableMirrorPeriodicityX` · `EnableMirrorPeriodicityY` | Mirror-tile the sampled grid |
+| `GetMedium` | Medium lookup — `null` inside a solid ⇒ absorbed (§5) |
+| `SetMesh` | Define a `ComponentGrid` mesh |
+| `EnableAvalancheSizeLimit` | Cap the avalanche size |
+| `EnableDriftLines` | Store the microscopic drift lines |
+| `SetBasketSize` | One-basket branches, for uproot compatibility |
+| `AddPlaneZ` | neBEM infinite plane — does **not** hold here (§5) |
+| `StatusLeftDriftArea` | Charge collected: it left the drift area (§8) |
+| `StatusOutsideTimeWindow` | Charge still in flight when the window closed |
+| `StatusAttached` | Electron attached (e.g. to CO₂) |
+
+### 🟩 Custom classes / structs
+
+| Symbol | Role |
+|---|---|
+| `GeometryConfig` | Geometry + mesh config block |
+| `FieldConfig` | Drift / ΔV / induction field config block |
+| `SourceConfig` | Primary-source energy and positions |
+| `GasConfig` | Gas mixture + Magboltz-table settings |
+| `SimulationConfig` | Event count, time windows, ion drift |
+| `AmplifierConfig` | Front-end amplifier settings |
+| `Config` | Top-level struct aggregating the six blocks |
+| `CliOptions` | Parsed `--config` / `--out` command line |
+| `ThgemGeom` | Derived geometry: z-planes, radii, electrode voltages |
+| `ThgemDetector` | Builds the neBEM cell; owns the field solver |
+| `SimRunner` | Runs the binary in a thread, streams stdout *(GUI)* |
+| `ConfigPanel` | Config editor + derived-voltage readout *(GUI)* |
+| `ResultsPanel` | The tabbed result views *(GUI)* |
+| `MainWindow` | Top-level window *(GUI)* |
+
+### 🟧 Custom functions / constants
+
+| Symbol | Role |
+|---|---|
+| `main` | Wires the whole pipeline (§4) |
+| `ParseCli` | Parse the command line into `CliOptions` |
+| `LoadConfig` | Parse the JSON config into `Config` |
+| `ReadDouble` · `ReadInt` · `ReadBool` | Defensive, defaulted JSON reads |
+| `DielectricEpsR` | Material name → relative permittivity |
+| `ComputeGeom` | `GeometryConfig` → `ThgemGeom` (z-planes, voltages) |
+| `SetupGas` | Build the `MediumMagboltz`; load or generate the table |
+| `InGas` | Is a point in gas (vs. inside a solid)? |
+| `SampleFieldToFile` | Sample neBEM onto the grid → text cache (+ flag) |
+| `DeriveFieldCacheName` | Transport-field cache filename key (geometry + fields) |
+| `DeriveWeightingCacheName` | Weighting cache filename key (geometry only) |
+| `DumpFieldMap` | Write the E-field x–z slice + on-axis profile to ROOT |
+| `DumpWeightingMap` | Write one electrode's weighting map to ROOT |
+| `SetupSensor` | Electrodes, time window, drift-area z-inset (§8) |
+| `ApplyOnePoleLowPass` · `ApplyBoxcarAverage` | Amplifier filter primitives |
+| `AmplifierOutputMv` | Current [fC/ns] → shaped voltage [mV] |
+| `RunDistancePoint` | The per-source-point event loop (§7) |
+| `classifyEndZone` | Endpoint (x,y,z) → zone (in-hole / below-plate / …) |
+| `DriftStatusToString` | Garfield status code → readable text |
+| `Mean` · `Rms` · `Sem` | Summary statistics |
+| `FileSafeNumber` | Number → filename-safe token (`0p5`) |
+| `WriteSummaryGraphs` · `WriteSummaryCsv` | Cross-point summary TGraphs / CSV |
+| `load_waveform_data` · `load_track_data` | Read signal / 3D-track branches *(GUI)* |
+| `load_thgem_field` · `load_thgem_wfield` | Read the field / weighting maps *(GUI)* |
+| `load_from_dict` | Apply a config dict to the widgets *(GUI)* |
+| `kGridHalfSpanFactor` | Transport-grid half-width ÷ pitch (= 0.5) |
+| `kMapNx` · `kMapNz` | Field / weighting dump resolution (81 × 161) |
+| `kMaxDispCloudPts` | Cap on stored avalanche birth points |
+| `kMaxDispElectronPaths` | Cap on stored avalanche drift lines |
+| `kMaxDispIonPaths` | Cap on stored ion paths |
+
+### 🟨 Config parameters (JSON keys)
+
+Grouped by JSON section; units and full descriptions in §10.
+
+| Section | Keys |
+|---|---|
+| `geometry` | `hole_diameter_um`, `hole_pitch_um`, `plate_thickness_um`, `copper_thickness_um`, `rim_um`, `drift_gap_mm`, `induction_gap_mm`, `dielectric_material`, `target_element_size_um`, `min_elements`, `max_elements`, `hole_sectors`, `periodic_copies`, `grid_nx`, `grid_nz` |
+| `fields` | `e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm` |
+| `source` | `energy_keV`, `source_distances_mm`, `x_positions_cm` |
+| `gas` | `gas1`, `gas1_fraction_pct`, `gas2`, `ion_species`, `temperature_K`, `pressure_Torr`, `enable_penning`, `n_magboltz_collisions`, `w_value_eV`, `max_electron_energy_eV`, `transport_max_energy_eV`, `n_field_points`, `e_field_min_vcm`, `e_field_max_vcm` |
+| `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift`, `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
+| `amplifier` | `enable`, `gain_db`, `input_impedance_ohm`, `bandwidth_high_hz`, `output_sample_ns` |
+
+### 🟪 ROOT output names
+
+Full layout in §9. `<id>` ∈ {`anode`, `thgem_top`, `thgem_bottom`}.
+
+| Group | Names |
+|---|---|
+| Per-event tree | `t_signals` (in a `dist_<h>_x<x>/` directory) |
+| Scalars | `event`, `anode_charge_fC`, `thgem_top_charge_fC`, `thgem_bottom_charge_fC` |
+| Waveforms | `anode`, `thgem_top`, `thgem_bottom` |
+| Electron / ion split | `<id>_e`, `<id>_i` |
+| Amplifier | `<id>_amp`, `<id>_amp_int` |
+| 3D geometry | `primary_x/y/z`, `cloud_x/y/z`, `aval_x/y/z`, `aval_npts`, `ion_x/y/z`, `ion_npts` |
+| `field/` maps | `h_field_mag`, `h_potential`, `h_field_ez`, `h_field_ex`, `g_axis_field`, `g_axis_potential`, `h_wpot_<id>`, `h_wfield_mag_<id>`, `g_axis_wpot_<id>` |
+| `summary/` graphs | `g_anode_charge`, `g_thgem_top_charge`, `g_avalanche_size`, `g_charge_ratio` |
+| Per-point histograms | `h_anode_charge`, `h_thgem_top_charge`, `h_thgem_bottom_charge`, `h_ratio_charge`, `h_n_primary_electrons`, `h_avalanche_size` |
+| Per-point profiles | `p_anode_signal`, `p_thgem_top_signal`, `p_thgem_bottom_signal`, `p_anode_electron`, `p_anode_ion`, `p_<id>_amp`, `p_<id>_amp_int` |
