@@ -73,7 +73,7 @@ point deposit, statistically equivalent to transporting all $N$.
 **Drift & diffusion.** In the drift and induction gaps the field is nearly uniform, so electrons
 drift along $-z$ toward the more positive anode with a superimposed random walk (transverse/
 longitudinal diffusion). Transport parameters (drift velocity, diffusion, Townsend $\alpha$,
-attachment $\eta$) come from a **Magboltz** table, tabulated vs. $|E|$.
+attachment $\eta$) come from a **Magboltz** table, tabulated vs. $\lvert E\rvert$.
 
 **Multiplication.** Inside the hole the field is strong enough that $\alpha$ dominates and the number
 of electrons grows as $\exp\left(\int \alpha\thinspace\mathrm{d}s\right)$. The measured gain is
@@ -230,7 +230,7 @@ configs are committed (see the README), so a fresh clone runs with no solve.
 Three electrodes are read out — `anode`, `thgem_top`, `thgem_bottom` (the drift cathode is not).
 Each `Solid` is given a `SetLabel(...)`, so neBEM can solve that electrode's **true Shockley–Ramo
 weighting field**: 1 V on the labelled electrode, 0 V on all others, no space charge. `DumpWeightingMap`
-writes each electrode's `W` map (and $|E_w|$) to the ROOT `field/` directory; `SampleFieldToFile`
+writes each electrode's `W` map (and $\lvert E_w\rvert$) to the ROOT `field/` directory; `SampleFieldToFile`
 samples each onto its **own** `ComponentGrid` (one grid instance holds exactly one weighting field, so
 three electrodes → three grids), added to the `Sensor` as three electrodes in `SetupSensor`.
 
@@ -284,9 +284,11 @@ hole at plate z). A healthy default run reads e.g.
 [fate] multiplied 27/30 events; primary endpoint: {attached @ in-hole: 5} {left drift area @ below-plate: 25}
 ```
 
-i.e. 25/30 primaries multiply and are **collected at the anode** (`left drift area @ below-plate`) and
-5 **attach** in the hole (CO₂). A single-event run is statistical and may show no avalanche — expected
-physics, not a bug.
+Read it as two *different* counts. **27/30 events multiplied** (the avalanche grew). Separately, of the
+30 **primaries**, 25 were **collected at the anode** (`left drift area @ below-plate`) and 5
+**attached** in the hole (CO₂). The two need not agree: an event can multiply even when the primary
+itself later attaches, because its secondaries carry on. A single-event run is statistical and may
+show no avalanche at all — expected physics, not a bug.
 
 **Drift lines** (only with `store_drift_lines`) are stored for the 3D view as concatenated points with
 a per-track length list: the primary (`primary_x/y/z`), the avalanche birth-point cloud
@@ -351,9 +353,9 @@ subfolder of `--out`. Every ROOT object named below is a 🟪 ROOT output name (
 
 | Object | Contents |
 |---|---|
-| `h_field_mag`, `h_potential`, `h_field_ez`, `h_field_ex` | x–z slice (y=0) of $|E|$, $V$, $E_z$, $E_x$ (`kMapNx × kMapNz`). |
+| `h_field_mag`, `h_potential`, `h_field_ez`, `h_field_ex` | x–z slice (y=0) of $\lvert E\rvert$, $V$, $E_z$, $E_x$ (`kMapNx × kMapNz`). |
 | `g_axis_field`, `g_axis_potential` | on-hole-axis profiles. |
-| `h_wpot_<id>`, `h_wfield_mag_<id>`, `g_axis_wpot_<id>` | weighting potential / $|E_w|$ / on-axis $W(z)$ for `id ∈ {anode, thgem_top, thgem_bottom}`. |
+| `h_wpot_<id>`, `h_wfield_mag_<id>`, `g_axis_wpot_<id>` | weighting potential / $\lvert E_w\rvert$ / on-axis $W(z)$ for `id ∈ {anode, thgem_top, thgem_bottom}`. |
 
 **`summary/`** — TGraphs vs. source distance: `g_anode_charge`, `g_thgem_top_charge`,
 `g_avalanche_size`, `g_charge_ratio`.
@@ -383,8 +385,7 @@ mean/rms/sem_charge_ratio, mean_primary_electrons, mean_avalanche_size`.
 ## 10. Configuration reference
 
 Every key below is a 🟨 config parameter (JSON key). One JSON file, mirrored by the `Config` structs
-(§4). Config units are converted to Garfield units on
-load.
+(§4); config units are converted to Garfield units on load.
 
 **`geometry`** — `hole_diameter_um`, `hole_pitch_um` (square array), `plate_thickness_um` (dielectric),
 `copper_thickness_um` (per face), `rim_um` (copper etched back from the hole edge; 0 = straight hole),
@@ -434,8 +435,8 @@ low-pass $\tau$), `output_sample_ns` (boxcar aperture). CIVIDEC C2-TCT datasheet
 | Waveforms | `load_waveform_data` | `anode`/`thgem_top`/`thgem_bottom` waveforms, raw or amplifier mode |
 | Integrals | `load_waveform_data` | running charge integrals, 3 pads |
 | 3D Tracks | `load_track_data` | geometry + primary/avalanche/ion drift lines (ROOT `TCanvas`) |
-| E-Field | `load_thgem_field` | $|E|$/$V$/$E_z$/$E_x$ map + axis profile, tiled over N holes |
-| Weighting Field | `load_thgem_wfield` | per-electrode $W$ / $|E_w|$, plus the "all electrodes" $W(z)$ overlay |
+| E-Field | `load_thgem_field` | $\lvert E\rvert$ / $V$ / $E_z$ / $E_x$ map + axis profile, tiled over N holes |
+| Weighting Field | `load_thgem_wfield` | per-electrode $W$ / $\lvert E_w\rvert$, plus the "all electrodes" $W(z)$ overlay |
 | Magboltz | — | gas transport parameters |
 
 The E-Field / Weighting tabs tile the one simulated periodic cell across x (the **Holes** spinbox) —
@@ -462,8 +463,6 @@ The non-obvious facts, in one place (each is expanded above):
   are found; otherwise the multi-hour Magboltz table is regenerated under `build/`.
 - **`transport_max_energy_eV`** should sit near the few-eV energies electrons actually reach — every
   microscopic step is sampled against the *maximum* collision rate over the whole table. §10.
-
-These are also recorded in the project's agent memory as hard-won gotchas.
 
 ---
 
