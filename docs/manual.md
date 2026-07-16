@@ -497,15 +497,39 @@ project root.
 
 ## 14. References
 
-- **Garfield++** — H. Schindler & R. Veenhof, simulation of particle detectors,
-  <https://garfieldpp.web.cern.ch/>. Classes used here: `MediumMagboltz`, `ComponentNeBem3d`,
-  `ComponentGrid`, `AvalancheMicroscopic`, `AvalancheMC`, `Sensor`.
-- **Magboltz** — S. Biagi, electron transport in gas mixtures (the `.gas` tables).
-- **neBEM** — N. Majumdar & S. Mukhopadhyay, nearly exact boundary element method for 3D field solving.
-- **GEM** — F. Sauli, *GEM: A new concept for electron amplification in gas detectors*, NIM A 386
-  (1997) 531 — the amplification concept a THGEM thickens.
-- **THGEM** — see reviews of THGEM/LEM detectors (e.g. Breskin et al.) for the operating regime.
-- **Shockley–Ramo** — W. Shockley, J. Appl. Phys. 9 (1938) 635; S. Ramo, Proc. IRE 27 (1939) 584 —
-  the induced-signal theorem this code integrates via the weighting potential.
-- **CIVIDEC C2-TCT** — broadband transimpedance current amplifier (the front-end model in
-  `AmplifierOutputMv`).
+**Software**
+
+- **Garfield++** — H. Schindler and R. Veenhof, *Garfield++ — simulation of ionisation-based tracking
+  detectors*, <https://garfieldpp.web.cern.ch/> (no single journal paper; cite the project and its
+  User Guide). The framework providing `MediumMagboltz`, `ComponentNeBem3d`, `ComponentGrid`,
+  `AvalancheMicroscopic`, `AvalancheMC`, and `Sensor`.
+- **Magboltz** — S. F. Biagi, *Monte Carlo simulation of electron drift and diffusion in counting
+  gases under the influence of electric and magnetic fields*, Nucl. Instrum. Meth. A **421** (1999)
+  234–240, [doi:10.1016/S0168-9002(98)01233-9](https://doi.org/10.1016/S0168-9002(98)01233-9). Source
+  of the gas transport/rate tables (`.gas`).
+- **neBEM** — N. Majumdar and S. Mukhopadhyay, *Simulation of three-dimensional electrostatic field
+  configuration in wire chambers: A novel approach*, Nucl. Instrum. Meth. A **566** (2006) 489–494,
+  [doi:10.1016/j.nima.2006.06.035](https://doi.org/10.1016/j.nima.2006.06.035)
+  ([arXiv:physics/0604030](https://arxiv.org/abs/physics/0604030); project
+  <https://nebem.web.cern.ch/>). The boundary-element field solver behind `ComponentNeBem3d`.
+
+**Detector physics**
+
+- **GEM** — F. Sauli, *GEM: A new concept for electron amplification in gas detectors*, Nucl. Instrum.
+  Meth. A **386** (1997) 531–534,
+  [doi:10.1016/S0168-9002(96)01172-2](https://doi.org/10.1016/S0168-9002(96)01172-2). The
+  amplification concept a THGEM thickens.
+- **THGEM** — A. Breskin *et al.*, *A concise review on THGEM detectors*, Nucl. Instrum. Meth. A
+  **598** (2009) 107–111, [doi:10.1016/j.nima.2008.08.062](https://doi.org/10.1016/j.nima.2008.08.062)
+  ([arXiv:0807.2026](https://arxiv.org/abs/0807.2026)). The operating regime this code models.
+- **Shockley–Ramo theorem** — W. Shockley, *Currents to Conductors Induced by a Moving Point Charge*,
+  J. Appl. Phys. **9** (1938) 635, [doi:10.1063/1.1710367](https://doi.org/10.1063/1.1710367); and
+  S. Ramo, *Currents Induced by Electron Motion*, Proc. IRE **27** (1939) 584–585,
+  [doi:10.1109/JRPROC.1939.228757](https://doi.org/10.1109/JRPROC.1939.228757). The induced-signal
+  theorem the code integrates via the weighting potential (§6).
+
+**Hardware**
+
+- **CIVIDEC C2-TCT** — CIVIDEC Instrumentation, *C2-TCT broadband transimpedance amplifier*
+  (10 kHz – 2 GHz, 40 dB), <https://cividec.at/electronics-C2-TCT.html>. The front-end model in
+  `AmplifierOutputMv`.
