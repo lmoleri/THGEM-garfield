@@ -67,7 +67,7 @@ longitudinal diffusion). Transport parameters (drift velocity, diffusion, Townse
 attachment $\eta$) come from a **Magboltz** table, tabulated vs. $|E|$.
 
 **Multiplication.** Inside the hole the field is strong enough that $\alpha$ dominates and the number
-of electrons grows as $\exp\!\big(\int \alpha\,\mathrm{d}s\big)$. The measured gain is
+of electrons grows as $\exp\left(\int \alpha\thinspace\mathrm{d}s\right)$. The measured gain is
 $\langle n_e\rangle$ from `GetAvalancheSize`. CO₂ is an electronegative quencher, so some electrons
 **attach** ($\eta$) and are lost — one reason a fraction of events never multiply.
 
@@ -291,7 +291,7 @@ kept as-is (their net is ~0).
 
 **Amplifier** (if enabled). `AmplifierOutputMv` shapes each channel's current [fC/ns ≡ µA] into [mV]:
 linear gain $10^{g_{dB}/20}$, an intrinsic upper-bandwidth one-pole low-pass
-($\tau = 1/(2\pi f_\text{high})$), the $g\cdot R_\text{in}$ current→voltage scale, and an optional
+($\tau = 1/(2\pi f_\text{high}) $), the $g\cdot R_\text{in}$ current→voltage scale, and an optional
 boxcar output aperture. A conductive pad has no input-capacitor current sink, so — unlike a resistive
 readout — there is no extra input low-pass. Results go to the `*_amp` / `*_amp_int` branches.
 
