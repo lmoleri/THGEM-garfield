@@ -201,7 +201,9 @@ class SimRunner(QThread):
         if self._run_name:
             run_dir = str(out_path / self._run_name)
         else:
-            subdirs = sorted(out_path.glob("*__n*"),
+            # Matches both "__n<N>" runs and the "__field" name a field-only run
+            # gets; the date prefix is what makes "*__*" specific enough.
+            subdirs = sorted((p for p in out_path.glob("*__*") if p.is_dir()),
                              key=lambda p: p.stat().st_mtime)
             run_dir = str(subdirs[-1]) if subdirs else self._out_dir
         self.finished.emit(run_dir)
@@ -470,7 +472,12 @@ class ConfigPanel(QScrollArea):
         sim_box  = QGroupBox("Simulation")
         sim_form = self._left_form_layout(sim_box)
 
-        self.n_events    = self._spin(1, 100000, 1000)
+        self.n_events    = self._spin(0, 100000, 1000)
+        self.n_events.setSpecialValueText("0  (field only)")
+        self.n_events.setToolTip(
+            "Number of avalanche events per source point.\n"
+            "0 = field only: solve the field, sample it and every read-out electrode's\n"
+            "weighting map, dump them and stop — no transport (fast geometry check).")
         self.max_aval    = self._spin(1000, 10000000, 500000)
         self.time_window = self._dspin(10.0, 100000.0, 10.0, 1, 300.0)
         self.time_step   = self._dspin(0.1, 10.0, 0.1, 2, 0.5)

@@ -171,11 +171,13 @@ export GARFIELD_INSTALL=/path/to/Garfield++/local/garfield
 export HEED_DATABASE=$GARFIELD_INSTALL/share/Heed/database
 
 ./build/thgem_sim --config config/default_thgem.json --out results
+./build/thgem_sim --config config/default_thgem.json --field-only   # field maps only, no transport
 python3 gui/app.py
 ```
 
 `thgem_sim` writes `thgem_sim.root`, `summary.csv` and a resolved `run_config.json` into a
-timestamped subdirectory of `--out`. The GUI runs the same binary and loads those outputs into its
+timestamped subdirectory of `--out`. Passing `--field-only` (or setting `n_events: 0`) solves and
+dumps the field + weighting maps and stops before any avalanche — a fast geometry check. The GUI runs the same binary and loads those outputs into its
 Summary / Plots / Waveforms / Integrals / [3D Tracks](#3d-tracks-view) / E-Field / Magboltz tabs.
 
 Each run also prints a **primary-electron fate** line per source height, e.g.
@@ -199,7 +201,7 @@ may show no avalanche. That is expected physics, not a bug.
 | `fields` | `e_drift_kvcm`, `delta_v_thgem_V`, `e_induction_kvcm` |
 | `source` | `energy_keV`, `source_distances_mm` (height above the top copper; `null` = random over the drift gap), `x_positions_cm` (`null` = random over the cell; a fixed `x` pins `y = 0`, so `x = 0` is the hole axis) |
 | `gas` | Magboltz mixture, temperature, pressure, Penning, field grid |
-| `simulation` | `n_events`, `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift` (default off), `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
+| `simulation` | `n_events` (0 = field only), `max_avalanche_size`, `time_window_ns`, `time_step_ns`, `enable_ion_drift` (default off), `store_drift_lines`, `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted`, `random_seed` |
 
 Three electrodes are read out — the anode pad and the two THGEM copper faces (`anode`,
 `thgem_top`, `thgem_bottom`); the drift cathode is not. Each electrode's **true neBEM weighting

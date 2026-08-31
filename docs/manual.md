@@ -407,10 +407,11 @@ EFINAL — keys the `.gas` filename), `transport_max_energy_eV` (collision-rate 
 few-eV energies electrons actually reach, since every step is sampled against the *max* rate),
 `n_field_points`, `e_field_min_vcm`, `e_field_max_vcm`.
 
-**`simulation`** — `n_events`, `max_avalanche_size` (hard cap), `time_window_ns`, `time_step_ns`
-(signal bin), `enable_ion_drift` (default off), `store_drift_lines` (needed for the curved 3D lines),
-`ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted` (cap per event), `random_seed` (0 =
-time-seeded).
+**`simulation`** — `n_events` (`0` = **field only**: solve and dump the field + weighting maps, then
+stop before any transport — the same as `--field-only`, §13), `max_avalanche_size` (hard cap),
+`time_window_ns`, `time_step_ns` (signal bin), `enable_ion_drift` (default off), `store_drift_lines`
+(needed for the curved 3D lines), `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted` (cap per
+event), `random_seed` (0 = time-seeded).
 
 **`amplifier`** — `enable`, `gain_db`, `input_impedance_ohm`, `bandwidth_high_hz` (upper −3 dB →
 low-pass $\tau$), `output_sample_ns` (boxcar aperture). CIVIDEC C2-TCT datasheet defaults.
@@ -484,11 +485,14 @@ cmake --build build -j4
 export GARFIELD_INSTALL=/path/to/Garfield++/local/garfield
 export HEED_DATABASE=$GARFIELD_INSTALL/share/Heed/database
 ./build/thgem_sim --config config/default_thgem.json --out results
+./build/thgem_sim --config config/default_thgem.json --field-only   # field maps only, no transport
 python3 gui/app.py            # or drive the binary from the GUI
 ```
 
-`ctest --test-dir build` runs the `smoke_thgem_sim` config (coarse mesh, committed caches) from the
-project root.
+`--field-only` (equivalently `n_events: 0`) solves the field, samples it, dumps the field and
+weighting maps and exits before any avalanche — a fast geometry check; the run folder is named
+`…__field` and the ROOT file has the `field/` maps but no `dist_*` trees. `ctest --test-dir build`
+runs the `smoke_thgem_sim` config (coarse mesh, committed caches) from the project root.
 
 **Extending:**
 

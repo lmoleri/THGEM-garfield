@@ -400,6 +400,10 @@ struct CliOptions {
   fs::path outDir{"results"};
   std::string runName;                    // empty = auto-generate from config
   std::optional<double> singleDistanceMm;
+  // Solve the field, sample it, dump the field/weighting maps and stop before any
+  // transport.  The cheap way to validate a new geometry — a bad field solve is the
+  // failure mode that costs the most time to diagnose downstream.
+  bool fieldOnly = false;
 };
 
 [[noreturn]] void PrintUsageAndExit(const char* prog, int code) {
@@ -409,6 +413,8 @@ struct CliOptions {
          "  --out    <dir>     Output directory (default: results)\n"
          "  --run-name <name>  Subdirectory name under --out (default: auto)\n"
          "  --distance <mm>    Run only this drift-gap height (overrides config list)\n"
+         "  --field-only       Solve and dump the field maps, then exit (no transport).\n"
+         "                     simulation.n_events = 0 in the config does the same.\n"
          "  --help             Show this message\n";
   std::exit(code);
 }
@@ -429,6 +435,8 @@ CliOptions ParseCli(int argc, char* argv[]) {
     } else if (arg == "--distance") {
       if (i + 1 >= argc) PrintUsageAndExit(argv[0], 1);
       opts.singleDistanceMm = std::stod(argv[++i]);
+    } else if (arg == "--field-only") {
+      opts.fieldOnly = true;
     } else if (arg == "--help" || arg == "-h") {
       PrintUsageAndExit(argv[0], 0);
     } else {
@@ -564,7 +572,8 @@ Config LoadConfig(const fs::path& path) {
   if (cfg.gas.pressureTorr     <= 0.)  throw std::runtime_error("gas.pressure_Torr must be positive");
   if (cfg.gas.transportMaxEnergyEV <= 0.)
     throw std::runtime_error("gas.transport_max_energy_eV must be positive");
-  if (cfg.simulation.nEvents   == 0)   throw std::runtime_error("simulation.n_events must be at least 1");
+  // n_events == 0 is legal: it means "field only" — solve, sample, dump the field
+  // and weighting maps and stop before any transport, exactly as --field-only does.
   if (cfg.simulation.timeWindowNs <= 0.) throw std::runtime_error("simulation.time_window_ns must be positive");
   if (cfg.simulation.timeStepNs   <= 0.) throw std::runtime_error("simulation.time_step_ns must be positive");
   if (cfg.simulation.randomSeed   <  0)  throw std::runtime_error("simulation.random_seed must be >= 0");
@@ -1831,8 +1840,9 @@ std::string BuildRunFolderName(const Config& cfg) {
   std::tm tm_local = *std::localtime(&now);
   std::ostringstream ss;
   ss << std::put_time(&tm_local, "%y%m%d_%H-%M__")
-     << "dV" << static_cast<int>(cfg.fields.deltaVThgemV)
-     << "V__n" << cfg.simulation.nEvents;
+     << "dV" << static_cast<int>(cfg.fields.deltaVThgemV) << "V__";
+  if (cfg.simulation.nEvents == 0) ss << "field";      // field-only run
+  else                             ss << "n" << cfg.simulation.nEvents;
   return ss.str();
 }
 
@@ -1860,6 +1870,10 @@ int main(int argc, char* argv[]) {
     if (opts.singleDistanceMm)
       cfg.source.fixedDistMm = std::vector<double>{*opts.singleDistanceMm};
 
+    // Field-only mode — reachable two ways: the CLI flag, and n_events: 0 in the
+    // config.  Solve and dump the field/weighting maps, then stop before transport.
+    const bool fieldOnly = opts.fieldOnly || cfg.simulation.nEvents == 0;
+
     const fs::path runDir = opts.outDir /
         (opts.runName.empty() ? BuildRunFolderName(cfg) : opts.runName);
     EnsureDirectory(runDir);
@@ -1885,7 +1899,15 @@ int main(int argc, char* argv[]) {
               << (cfg.source.fixedDistMm.has_value()
                     ? std::to_string(cfg.source.fixedDistMm->size()) + " height point(s)"
                     : "random height")
-              << "\n  events  : " << cfg.simulation.nEvents << " per point\n";
+              << "\n  events  : "
+              << (cfg.simulation.nEvents == 0
+                    ? std::string("0 (field only)")
+                    : std::to_string(cfg.simulation.nEvents) + " per point")
+              << "\n";
+    if (fieldOnly)
+      std::cout << "  mode    : field only ("
+                << (opts.fieldOnly ? "--field-only" : "n_events = 0")
+                << ") — solve and dump the maps, no transport\n";
 
     using Clock = std::chrono::steady_clock;
     auto secsSince = [](Clock::time_point t0) {
@@ -1897,7 +1919,9 @@ int main(int argc, char* argv[]) {
     auto tGas = Clock::now();
     MediumMagboltz gas(cfg.gas.gas1, cfg.gas.frac1,
                        cfg.gas.gas2, 100. - cfg.gas.frac1);
-    SetupGas(gas, cfg.gas, cfg.simulation.enableIonDrift);
+    // In field-only mode the gas medium is still set up (it is the drift medium the
+    // ComponentGrid is given), but the ion-mobility table is not needed.
+    SetupGas(gas, cfg.gas, cfg.simulation.enableIonDrift && !fieldOnly);
     std::cout << "  [timing] gas setup: " << FormatNumber(secsSince(tGas), 1) << " s\n";
 
     // THGEM cell + transport field.  neBEM solves the real field; it is sampled
@@ -2020,6 +2044,14 @@ int main(int argc, char* argv[]) {
     for (std::size_t e = 0; e < kReadoutIds.size(); ++e)
       DumpWeightingMap(fieldDir, kReadoutIds[e], wgrids[e], g);
     std::cout << "  [timing] field-map dump: " << FormatNumber(secsSince(tDump), 1) << " s\n";
+
+    if (fieldOnly) {
+      rootFile.Write();
+      rootFile.Close();
+      WriteJsonFile(runDir / "run_config.json", ConfigToJson(cfg, g));
+      std::cout << "\nField only: field and weighting maps written to " << runDir << "\n";
+      return 0;
+    }
 
     std::vector<DistanceSummary> allSummaries;
 
