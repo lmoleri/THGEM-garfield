@@ -241,8 +241,8 @@ class ConfigPanel(QScrollArea):
         self.rim_um.setToolTip(
             "Etched rim [μm]: the copper is etched back from the hole edge, so the copper "
             "openings are wider than the dielectric hole by this amount (0 = straight hole).")
-        self.drift_gap = self._dspin(0.5, 20.0, 0.5, 2, 3.0)
-        self.drift_gap.setToolTip("Drift gap: top copper → drift cathode [mm]")
+        self.drift_gap = self._dspin(0.01, 20.0, 0.01, 2, 3.0)
+        self.drift_gap.setToolTip("Drift gap: top copper → drift cathode [mm] (10 µm steps, min 10 µm)")
         self.induction_gap = self._dspin(0.1, 20.0, 0.1, 2, 2.0)
         self.induction_gap.setToolTip("Induction gap: bottom copper → anode pad [mm]")
         self.dielectric_material = QComboBox()
