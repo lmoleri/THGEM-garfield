@@ -52,37 +52,67 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+# ── Reusable, import-friendly helpers (shared with gui/transparency_app.py) ──────
+
+#: Fraction columns read back from a run's summary.csv.
+FRACTION_KEYS = (
+    "frac_anode", "sem_frac_anode", "frac_bottom_cu", "sem_frac_bottom_cu",
+    "frac_top_cu", "frac_attached", "anode_over_anode_plus_bottom",
+)
+
+
+def gap_range(lo: float, hi: float, step: float) -> list[float]:
+    """Inclusive drift-gap range [lo, hi] in mm with the given step."""
+    vals, v = [], lo
+    while v <= hi + 1e-9:
+        vals.append(round(v, 4))
+        v += step
+    return vals
+
+
+def build_gap_config(base_cfg: dict, gap: float, events: int, release: str) -> dict:
+    """A deep copy of base_cfg set up for a drift-only transparency run at one drift gap.
+
+    release = "random" releases electrons uniformly over the drift gap; any other value
+    is parsed as a fixed release height in mm above the top copper.
+    """
+    cfg = json.loads(json.dumps(base_cfg))  # deep copy
+    cfg["geometry"]["drift_gap_mm"] = gap
+    cfg["simulation"]["drift_only"] = True
+    cfg["simulation"]["n_events"] = events
+    if str(release) == "random":
+        cfg["source"]["source_distances_mm"] = None
+    else:
+        cfg["source"]["source_distances_mm"] = [float(release)]
+    return cfg
+
+
+def parse_summary(summary_csv: Path, gap: float | None = None) -> dict:
+    """The transparency fractions from a run's summary.csv (last source-point row)."""
+    row = list(csv.DictReader(Path(summary_csv).open()))[-1]
+    out = {"gap_mm": gap} if gap is not None else {}
+    out.update({k: float(row[k]) for k in FRACTION_KEYS})
+    return out
+
+
 def gap_list(args: argparse.Namespace) -> list[float]:
     if args.gaps:
         return [float(x) for x in args.gaps.split(",") if x.strip()]
     if args.gap_range:
-        lo, hi, step = args.gap_range
-        vals, v = [], lo
-        while v <= hi + 1e-9:
-            vals.append(round(v, 4))
-            v += step
-        return vals
+        return gap_range(*args.gap_range)
     # sensible default sweep
     return [0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0]
 
 
 def run_one_gap(args, base_cfg: dict, gap: float, out_dir: Path) -> dict | None:
     run_name = f"gap_{gap:.3f}mm"
-    run_dir = out_dir / run_name
-    summary = run_dir / "summary.csv"
+    summary = out_dir / run_name / "summary.csv"
     if summary.exists() and not args.force:
         print(f"  gap {gap:.3f} mm: reusing {summary}")
     else:
-        cfg = json.loads(json.dumps(base_cfg))  # deep copy
-        cfg["geometry"]["drift_gap_mm"] = gap
-        cfg["simulation"]["drift_only"] = True
-        cfg["simulation"]["n_events"] = args.events
-        if args.release == "random":
-            cfg["source"]["source_distances_mm"] = None
-        else:
-            cfg["source"]["source_distances_mm"] = [float(args.release)]
         cfg_path = out_dir / f"{run_name}.json"
-        cfg_path.write_text(json.dumps(cfg, indent=2))
+        cfg_path.write_text(json.dumps(
+            build_gap_config(base_cfg, gap, args.events, args.release), indent=2))
         print(f"  gap {gap:.3f} mm: running (one-time neBEM solve if not cached)...", flush=True)
         r = subprocess.run([str(Path(args.binary)), "--config", str(cfg_path),
                             "--out", str(out_dir), "--run-name", run_name],
@@ -90,17 +120,7 @@ def run_one_gap(args, base_cfg: dict, gap: float, out_dir: Path) -> dict | None:
         if r.returncode != 0 or not summary.exists():
             print(f"  gap {gap:.3f} mm: FAILED (exit {r.returncode})", file=sys.stderr)
             return None
-    row = list(csv.DictReader(summary.open()))[-1]
-    return {
-        "gap_mm": gap,
-        "frac_anode": float(row["frac_anode"]),
-        "sem_frac_anode": float(row["sem_frac_anode"]),
-        "frac_bottom_cu": float(row["frac_bottom_cu"]),
-        "sem_frac_bottom_cu": float(row["sem_frac_bottom_cu"]),
-        "frac_top_cu": float(row["frac_top_cu"]),
-        "frac_attached": float(row["frac_attached"]),
-        "anode_over_anode_plus_bottom": float(row["anode_over_anode_plus_bottom"]),
-    }
+    return parse_summary(summary, gap)
 
 
 def main() -> int:

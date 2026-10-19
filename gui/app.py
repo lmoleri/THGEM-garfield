@@ -3011,6 +3011,8 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         self.act_load = tb.addAction("Load Config")
         self.act_save = tb.addAction("Save Config")
+        tb.addSeparator()
+        self.act_transparency = tb.addAction("Transparency study…")
 
         self.act_run.setEnabled(binary_ok)
         self.act_stop.setEnabled(False)
@@ -3019,6 +3021,7 @@ class MainWindow(QMainWindow):
         self.act_stop.triggered.connect(self._on_stop)
         self.act_load.triggered.connect(self._on_load_config)
         self.act_save.triggered.connect(self._on_save_config)
+        self.act_transparency.triggered.connect(self._on_transparency)
 
         # ── Central splitter ─────────────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -3055,6 +3058,17 @@ class MainWindow(QMainWindow):
             )
 
     # ── Toolbar actions ───────────────────────────────────────────────────
+
+    def _on_transparency(self):
+        """Open the dedicated electron-transparency sweep GUI in its own window."""
+        app_path = SCRIPT_DIR / "transparency_app.py"
+        try:
+            subprocess.Popen([sys.executable, str(app_path)],
+                             cwd=str(THGEM_DIR), start_new_session=True)
+            self.statusBar().showMessage("Opened the transparency-study GUI", 4000)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "Could not launch",
+                                f"Failed to open {app_path}:\n{exc}")
 
     def _on_run(self):
         if not BINARY.exists():

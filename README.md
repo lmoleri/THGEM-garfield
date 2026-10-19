@@ -173,7 +173,8 @@ export HEED_DATABASE=$GARFIELD_INSTALL/share/Heed/database
 ./build/thgem_sim --config config/default_thgem.json --out results
 ./build/thgem_sim --config config/default_thgem.json --field-only   # field maps only, no transport
 ./build/thgem_sim --config config/default_thgem.json --drift-only   # no multiplication; collection fate
-python3 gui/app.py
+python3 gui/app.py                     # main single-geometry GUI
+python3 gui/transparency_app.py        # dedicated electron-transparency sweep GUI
 ```
 
 `thgem_sim` writes `thgem_sim.root`, `summary.csv` and a resolved `run_config.json` into a
@@ -181,7 +182,9 @@ timestamped subdirectory of `--out`. Passing `--field-only` (or setting `n_event
 dumps the field + weighting maps and stops before any avalanche — a fast geometry check. Passing
 `--drift-only` (or `drift_only: true`) drifts electrons with **no multiplication** and tallies the
 collection fate (anode / THGEM bottom copper / top copper / attached) — for electron-transparency
-studies; `scripts/transparency_vs_drift.py` sweeps it across drift gaps and plots fraction vs gap. The GUI runs the same binary and loads those outputs into its
+studies; `scripts/transparency_vs_drift.py` sweeps it across drift gaps and plots fraction vs gap, and
+`gui/transparency_app.py` is a dedicated GUI for that sweep. The main GUI runs the same binary and
+loads its outputs into the
 Summary / Plots / Waveforms / Integrals / [3D Tracks](#3d-tracks-view) / E-Field / Magboltz tabs.
 
 Each run also prints a **primary-electron fate** line per source height, e.g.
