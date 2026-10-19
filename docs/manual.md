@@ -409,9 +409,11 @@ few-eV energies electrons actually reach, since every step is sampled against th
 
 **`simulation`** — `n_events` (`0` = **field only**: solve and dump the field + weighting maps, then
 stop before any transport — the same as `--field-only`, §13), `max_avalanche_size` (hard cap),
-`time_window_ns`, `time_step_ns` (signal bin), `enable_ion_drift` (default off), `store_drift_lines`
-(needed for the curved 3D lines), `ion_max_step_um`, `ion_time_window_ns`, `max_ions_drifted` (cap per
-event), `random_seed` (0 = time-seeded).
+`time_window_ns`, `time_step_ns` (signal bin), `enable_ion_drift` (default off), `drift_only`
+(`true` = **drift only**: transport single electrons with no multiplication and tally where each ends —
+anode / THGEM bottom copper / top copper / attached — for electron-transparency studies; the same as
+`--drift-only`, §13), `store_drift_lines` (needed for the curved 3D lines), `ion_max_step_um`,
+`ion_time_window_ns`, `max_ions_drifted` (cap per event), `random_seed` (0 = time-seeded).
 
 **`amplifier`** — `enable`, `gain_db`, `input_impedance_ohm`, `bandwidth_high_hz` (upper −3 dB →
 low-pass $\tau$), `output_sample_ns` (boxcar aperture). CIVIDEC C2-TCT datasheet defaults.
@@ -486,12 +488,20 @@ export GARFIELD_INSTALL=/path/to/Garfield++/local/garfield
 export HEED_DATABASE=$GARFIELD_INSTALL/share/Heed/database
 ./build/thgem_sim --config config/default_thgem.json --out results
 ./build/thgem_sim --config config/default_thgem.json --field-only   # field maps only, no transport
+./build/thgem_sim --config config/default_thgem.json --drift-only   # no multiplication; collection fate
 python3 gui/app.py            # or drive the binary from the GUI
 ```
 
 `--field-only` (equivalently `n_events: 0`) solves the field, samples it, dumps the field and
 weighting maps and exits before any avalanche — a fast geometry check; the run folder is named
-`…__field` and the ROOT file has the `field/` maps but no `dist_*` trees. `ctest --test-dir build`
+`…__field` and the ROOT file has the `field/` maps but no `dist_*` trees.
+
+`--drift-only` (equivalently `drift_only: true`) drifts each of `n_events` electrons with **no
+multiplication** and tallies where it ends — anode / THGEM bottom copper / top copper / attached — for
+**electron-transparency / collection-efficiency** studies. The fractions (with binomial errors) go to
+`summary.csv` (`frac_anode`, `frac_bottom_cu`, …, `anode_over_anode_plus_bottom`) and the run log.
+`scripts/transparency_vs_drift.py` sweeps this across drift gaps and plots the fraction vs drift gap.
+`ctest --test-dir build`
 runs the `smoke_thgem_sim` config (coarse mesh, committed caches) from the project root.
 
 **Extending:**

@@ -172,6 +172,10 @@ struct SimulationConfig {
   double      timeStepNs       = 0.5;
   bool        enableIonDrift   = false;
   bool        storeDriftLines  = false;
+  // Drift single electrons with no avalanche multiplication and tally where each ends
+  // (anode / THGEM bottom copper / top copper / attached) — for electron-transparency
+  // and collection-efficiency studies.  Independent of the field-only (n_events == 0) mode.
+  bool        driftOnly        = false;
   double      ionMaxStepUm     = 5.0;
   // Wall-clock safety bound for ion drift (AvalancheMC).  Ions are ~1000x slower
   // than electrons; distance-stepping bounds a normal ion by geometry, and this
@@ -249,6 +253,15 @@ struct DistanceSummary {
   double      semChargeRatio        = 0.;
   double      meanPrimaryElectrons  = 0.;
   double      meanAvalancheSize     = 0.;
+  // Electron-transparency tallies (drift_only mode): fraction of drifted electrons that
+  // end at each destination, with binomial standard error sqrt(f(1-f)/N).
+  double      fracAnode         = 0.;   // reached the anode (extracted through the hole)
+  double      semFracAnode      = 0.;
+  double      fracBottomCu      = 0.;   // collected on the THGEM bottom copper
+  double      semFracBottomCu   = 0.;
+  double      fracTopCu         = 0.;   // collected on the THGEM top copper
+  double      fracAttached      = 0.;   // attached in the gas
+  double      anodeOverAnodePlusBottom = 0.;  // anode / (anode + bottom copper)
 };
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
@@ -404,6 +417,9 @@ struct CliOptions {
   // transport.  The cheap way to validate a new geometry — a bad field solve is the
   // failure mode that costs the most time to diagnose downstream.
   bool fieldOnly = false;
+  // Drift single electrons with no multiplication and tally their collection fate
+  // (anode / bottom Cu / top Cu / attached) — for transparency / collection studies.
+  bool driftOnly = false;
 };
 
 [[noreturn]] void PrintUsageAndExit(const char* prog, int code) {
@@ -415,6 +431,9 @@ struct CliOptions {
          "  --distance <mm>    Run only this drift-gap height (overrides config list)\n"
          "  --field-only       Solve and dump the field maps, then exit (no transport).\n"
          "                     simulation.n_events = 0 in the config does the same.\n"
+         "  --drift-only       Drift single electrons with no multiplication and tally\n"
+         "                     their collection fate (electron-transparency study).\n"
+         "                     simulation.drift_only = true in the config does the same.\n"
          "  --help             Show this message\n";
   std::exit(code);
 }
@@ -437,6 +456,8 @@ CliOptions ParseCli(int argc, char* argv[]) {
       opts.singleDistanceMm = std::stod(argv[++i]);
     } else if (arg == "--field-only") {
       opts.fieldOnly = true;
+    } else if (arg == "--drift-only") {
+      opts.driftOnly = true;
     } else if (arg == "--help" || arg == "-h") {
       PrintUsageAndExit(argv[0], 0);
     } else {
@@ -526,6 +547,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.timeStepNs       = ReadDouble(*s, "simulation", "time_step_ns",       cfg.simulation.timeStepNs);
     cfg.simulation.enableIonDrift   = ReadBool  (*s, "simulation", "enable_ion_drift",   cfg.simulation.enableIonDrift);
     cfg.simulation.storeDriftLines  = ReadBool  (*s, "simulation", "store_drift_lines",  cfg.simulation.storeDriftLines);
+    cfg.simulation.driftOnly        = ReadBool  (*s, "simulation", "drift_only",         cfg.simulation.driftOnly);
     cfg.simulation.ionMaxStepUm     = ReadDouble(*s, "simulation", "ion_max_step_um",    cfg.simulation.ionMaxStepUm);
     cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
     cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
@@ -1351,6 +1373,29 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     return (std::hypot(xe, ye) < g.rHoleCm) ? "in-hole" : "in-plate";
   };
 
+  // Drift-only (transparency) mode: where each drifted electron ends up.  The status
+  // says *how* it stopped — collected at a z-boundary (StatusLeftDriftArea, the inset
+  // sensor box, §8), absorbed inside a solid (StatusLeftDriftMedium, GetMedium → null),
+  // or attached — and the endpoint z says *which* electrode.  Anode = extracted through
+  // the hole and collected below the plate; the copper faces absorb on contact.
+  const bool driftOnly = sim.driftOnly;
+  std::map<std::string, long> collectTally;   // category → count
+  // Classify by *where* the electron ended (robust: absorption on a solid does not always
+  // carry a distinct Garfield status).  An electron that attached in the gas is tagged by
+  // status; otherwise the endpoint z decides.  "anode" = made it below the bottom copper,
+  // into the induction gap, so the induction field collects it on the anode; "drift" =
+  // still above the plate at the time-window end (did not reach the hole — raise
+  // time_window_ns / e_drift to resolve these).
+  auto categorizeCollection =
+      [&g](int status, double /*xe*/, double /*ye*/, double ze) -> std::string {
+    if (status == Garfield::StatusAttached) return "attached";
+    if (ze < g.zBotCuBot)  return "anode";       // extracted below the bottom copper
+    if (ze > g.zTopCuTop)  return "drift";       // still in the drift gap (unresolved)
+    if (ze >  g.zDielHalf) return "top_cu";      // stopped on the top copper
+    if (ze < -g.zDielHalf) return "bottom_cu";   // stopped on the bottom copper
+    return "dielectric";                         // stopped on the hole wall (dielectric)
+  };
+
   // ── Event loop ───────────────────────────────────────────────────────────────
   auto tEvent = std::chrono::steady_clock::now();
   for (std::size_t ev = 0; ev < sim.nEvents; ++ev) {
@@ -1371,12 +1416,36 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
                                 ? *distOptMm
                                 : gRandom->Uniform(0., driftGapMm);
     double z0 = g.zTopCuTop + heightMm * 0.1;   // mm → cm above top copper
-    z0 = std::max(g.zTopCuTop + 1.e-4, std::min(g.zDrift - 1.e-4, z0));
+    // Keep the start inside the sensor's active area, which is inset one transport-grid
+    // cell below the drift cathode (SetupSensor, §8).  Releasing at zDrift - 1e-4 would
+    // land above that inset and the transporter rejects it as "outside the active area"
+    // — exposed by a release distribution that reaches the top of the drift gap.
+    const double zCellMargin = (g.zDrift - g.zAnode) /
+                               std::max(1, cfg.geometry.gridNz - 1);
+    const double zTopLimit = std::max(g.zTopCuTop + 1.e-4, g.zDrift - zCellMargin - 1.e-4);
+    z0 = std::max(g.zTopCuTop + 1.e-4, std::min(zTopLimit, z0));
 
     // Transport one representative electron and scale by nPrimary (see tgc note).
     ++nInteracted;
     hNprimary.Fill(nPrimary);
     primaryCounts.push_back(static_cast<double>(nPrimary));
+
+    // Drift-only mode: drift this single electron with no avalanche, record where it
+    // ended, and skip all the avalanche/signal/ion bookkeeping below.  One electron per
+    // event (nPrimary is not used — each counts as one in the transparency fractions).
+    if (driftOnly) {
+      aval.DriftElectron(x0, y0, z0, 0., 0.1);
+      if (aval.GetNumberOfElectronEndpoints() > 0) {
+        double a0, b0, c0, d0, e0, x1, y1, z1, t1, ee1; int st;
+        aval.GetElectronEndpoint(0, a0, b0, c0, d0, e0, x1, y1, z1, t1, ee1, st);
+        ++collectTally[categorizeCollection(st, x1, y1, z1)];
+        ++primaryFate[DriftStatusToString(st) + " @ " + classifyEndZone(x1, y1, z1)];
+      }
+      if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents)
+        std::cout << "  height=" << distLabel << ": " << (ev + 1) << "/" << sim.nEvents
+                  << " electrons drifted\n";
+      continue;
+    }
 
     aval.AvalancheElectron(x0, y0, z0, 0., 0.1);  // 0.1 eV ≈ thermal
     int ne = 0, ni = 0;
@@ -1661,6 +1730,37 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   s.semChargeRatio      = Sem(s.rmsChargeRatio, chargeRatios.size());
   s.meanPrimaryElectrons = Mean(primaryCounts);
   s.meanAvalancheSize    = Mean(avalancheSizes);
+
+  // Drift-only transparency fractions (binomial SEM sqrt(f(1-f)/N)).
+  if (driftOnly) {
+    const double n = static_cast<double>(sim.nEvents);
+    auto frac = [&](const char* key) {
+      auto it = collectTally.find(key);
+      return (n > 0. && it != collectTally.end()) ? it->second / n : 0.;
+    };
+    auto binErr = [&](double f) { return n > 0. ? std::sqrt(f * (1. - f) / n) : 0.; };
+    s.fracAnode       = frac("anode");
+    s.semFracAnode    = binErr(s.fracAnode);
+    s.fracBottomCu    = frac("bottom_cu");
+    s.semFracBottomCu = binErr(s.fracBottomCu);
+    s.fracTopCu       = frac("top_cu");
+    s.fracAttached    = frac("attached");
+    const double denom = s.fracAnode + s.fracBottomCu;
+    s.anodeOverAnodePlusBottom = denom > 0. ? s.fracAnode / denom : 0.;
+    const double fracDrift = frac("drift") + frac("dielectric");  // unresolved + hole-wall
+    std::cout << "  [transparency] anode " << FormatNumber(100. * s.fracAnode, 1) << "%"
+              << " ± " << FormatNumber(100. * s.semFracAnode, 1)
+              << ", bottom-Cu " << FormatNumber(100. * s.fracBottomCu, 1) << "%"
+              << ", top-Cu " << FormatNumber(100. * s.fracTopCu, 1) << "%"
+              << ", attached " << FormatNumber(100. * s.fracAttached, 1) << "%"
+              << ", unresolved " << FormatNumber(100. * fracDrift, 1) << "%"
+              << "   anode/(anode+bottom) = "
+              << FormatNumber(s.anodeOverAnodePlusBottom, 3) << "\n";
+    if (fracDrift > 0.05)
+      std::cout << "  [transparency] note: " << FormatNumber(100. * fracDrift, 0)
+                << "% of electrons did not resolve within the time window — raise "
+                   "time_window_ns or e_drift for a cleaner measurement.\n";
+  }
   return s;
 }
 
@@ -1723,7 +1823,9 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
        "mean_thgem_top_charge_fC,rms_thgem_top_charge_fC,sem_thgem_top_charge_fC,"
        "mean_thgem_bottom_charge_fC,rms_thgem_bottom_charge_fC,sem_thgem_bottom_charge_fC,"
        "mean_charge_ratio,rms_charge_ratio,sem_charge_ratio,"
-       "mean_primary_electrons,mean_avalanche_size\n";
+       "mean_primary_electrons,mean_avalanche_size,"
+       "frac_anode,sem_frac_anode,frac_bottom_cu,sem_frac_bottom_cu,"
+       "frac_top_cu,frac_attached,anode_over_anode_plus_bottom\n";
 
   f << std::fixed << std::setprecision(6);
   for (const auto& s : sums) {
@@ -1747,7 +1849,14 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
       << s.rmsChargeRatio            << ','
       << s.semChargeRatio            << ','
       << s.meanPrimaryElectrons      << ','
-      << s.meanAvalancheSize         << '\n';
+      << s.meanAvalancheSize         << ','
+      << s.fracAnode                 << ','
+      << s.semFracAnode              << ','
+      << s.fracBottomCu              << ','
+      << s.semFracBottomCu           << ','
+      << s.fracTopCu                 << ','
+      << s.fracAttached              << ','
+      << s.anodeOverAnodePlusBottom  << '\n';
   }
 }
 
@@ -1820,6 +1929,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"time_step_ns",       cfg.simulation.timeStepNs},
       {"enable_ion_drift",   cfg.simulation.enableIonDrift},
       {"store_drift_lines",  cfg.simulation.storeDriftLines},
+      {"drift_only",         cfg.simulation.driftOnly},
       {"ion_max_step_um",    cfg.simulation.ionMaxStepUm},
       {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
       {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
@@ -1874,6 +1984,11 @@ int main(int argc, char* argv[]) {
     // config.  Solve and dump the field/weighting maps, then stop before transport.
     const bool fieldOnly = opts.fieldOnly || cfg.simulation.nEvents == 0;
 
+    // Drift-only (electron-transparency) mode — the CLI flag or simulation.drift_only.
+    // RunDistancePoint reads it from cfg, so fold the flag into the config here.
+    cfg.simulation.driftOnly = cfg.simulation.driftOnly || opts.driftOnly;
+    const bool driftOnly = cfg.simulation.driftOnly && !fieldOnly;
+
     const fs::path runDir = opts.outDir /
         (opts.runName.empty() ? BuildRunFolderName(cfg) : opts.runName);
     EnsureDirectory(runDir);
@@ -1908,6 +2023,9 @@ int main(int argc, char* argv[]) {
       std::cout << "  mode    : field only ("
                 << (opts.fieldOnly ? "--field-only" : "n_events = 0")
                 << ") — solve and dump the maps, no transport\n";
+    else if (driftOnly)
+      std::cout << "  mode    : drift only (no multiplication) — single-electron "
+                   "transport, tally the collection fate\n";
 
     using Clock = std::chrono::steady_clock;
     auto secsSince = [](Clock::time_point t0) {
