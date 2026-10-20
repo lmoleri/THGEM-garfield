@@ -174,7 +174,7 @@ export HEED_DATABASE=$GARFIELD_INSTALL/share/Heed/database
 ./build/thgem_sim --config config/default_thgem.json --field-only   # field maps only, no transport
 ./build/thgem_sim --config config/default_thgem.json --drift-only   # no multiplication; collection fate
 python3 gui/app.py                     # main single-geometry GUI
-python3 gui/transparency_app.py        # dedicated electron-transparency sweep GUI
+python3 gui/transparency_app.py        # dedicated gap-scan GUI (transparency / avalanche collection)
 ```
 
 `thgem_sim` writes `thgem_sim.root`, `summary.csv` and a resolved `run_config.json` into a
@@ -183,8 +183,11 @@ dumps the field + weighting maps and stops before any avalanche — a fast geome
 `--drift-only` (or `drift_only: true`) drifts electrons with **no multiplication** and tallies the
 collection fate (anode / THGEM bottom copper / top copper / attached) — for electron-transparency
 studies; `scripts/transparency_vs_drift.py` sweeps it across drift gaps and plots fraction vs gap, and
-`gui/transparency_app.py` is a dedicated GUI for that sweep. The main GUI runs the same binary and
-loads its outputs into the
+`gui/transparency_app.py` is a dedicated gap-scan GUI — it scans the **drift or induction gap** in
+**transparency (single electron)** or **avalanche (with multiplication)** mode. Both report
+electron-collection fractions (electrons collected at an electrode / total produced — no induced
+signals); in avalanche mode the anode fraction is the measurement's Anode/THGEM-top ratio. The main GUI
+runs the same binary and loads its outputs into the
 Summary / Plots / Waveforms / Integrals / [3D Tracks](#3d-tracks-view) / E-Field / Magboltz tabs.
 
 Each run also prints a **primary-electron fate** line per source height, e.g.

@@ -1352,6 +1352,10 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
 
   std::vector<double> anodeCharges, topCharges, botCharges, chargeRatios;
   std::vector<double> primaryCounts, avalancheSizes;
+  // Avalanche-mode electron-collection fractions, one entry per event: where the
+  // produced electrons physically end up (collected at the anode / THGEM copper),
+  // with the total number of produced electrons as the denominator.
+  std::vector<double> collAnodeFrac, collTopCuFrac, collBottomCuFrac, collUnresFrac;
   anodeCharges.reserve(sim.nEvents);
   topCharges.reserve(sim.nEvents);
   botCharges.reserve(sim.nEvents);
@@ -1463,6 +1467,28 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       aval.GetElectronEndpoint(0, fx0, fy0, fz0, ft0, fe0,
                                   fx1, fy1, fz1, ft1, fe1, fst);
       ++primaryFate[DriftStatusToString(fst) + " @ " + classifyEndZone(fx1, fy1, fz1)];
+    }
+
+    // Electron-collection tally: classify *every* produced electron by where it was
+    // collected (anode / THGEM copper), so frac_anode = electrons reaching the anode /
+    // total produced — the no-induced-signal "Anode/THGEM-top" of the measurement.
+    if (nEp > 0) {
+      long nColAnode = 0, nColTopCu = 0, nColBottomCu = 0, nColUnres = 0;
+      for (std::size_t i = 0; i < nEp; ++i) {
+        double ex0, ey0, ez0, et0, ee0, ex1, ey1, ez1, et1, ee1; int est;
+        aval.GetElectronEndpoint(i, ex0, ey0, ez0, et0, ee0,
+                                    ex1, ey1, ez1, et1, ee1, est);
+        const std::string cat = categorizeCollection(est, ex1, ey1, ez1);
+        if      (cat == "anode")     ++nColAnode;
+        else if (cat == "top_cu")    ++nColTopCu;
+        else if (cat == "bottom_cu") ++nColBottomCu;
+        else if (cat == "drift")     ++nColUnres;   // still drifting at the time window
+      }
+      const double tot = static_cast<double>(nEp);
+      collAnodeFrac.push_back(nColAnode / tot);
+      collTopCuFrac.push_back(nColTopCu / tot);
+      collBottomCuFrac.push_back(nColBottomCu / tot);
+      collUnresFrac.push_back(nColUnres / tot);
     }
 
     // Primary electron drift line (track 0).
@@ -1760,6 +1786,29 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       std::cout << "  [transparency] note: " << FormatNumber(100. * fracDrift, 0)
                 << "% of electrons did not resolve within the time window — raise "
                    "time_window_ns or e_drift for a cleaner measurement.\n";
+  } else if (!collAnodeFrac.empty()) {
+    // Avalanche electron-collection fractions: mean over events of (electrons collected
+    // at electrode X) / (total produced), with the event-to-event SEM.  frac_anode is
+    // the measurement's Anode/THGEM-top ratio (anode collected / total produced).
+    s.fracAnode       = Mean(collAnodeFrac);
+    s.semFracAnode    = Sem(Rms(collAnodeFrac, s.fracAnode), collAnodeFrac.size());
+    s.fracBottomCu    = Mean(collBottomCuFrac);
+    s.semFracBottomCu = Sem(Rms(collBottomCuFrac, s.fracBottomCu), collBottomCuFrac.size());
+    s.fracTopCu       = Mean(collTopCuFrac);
+    const double denom = s.fracAnode + s.fracBottomCu;
+    s.anodeOverAnodePlusBottom = denom > 0. ? s.fracAnode / denom : 0.;
+    const double fracUnres = Mean(collUnresFrac);
+    std::cout << "  [collection] anode " << FormatNumber(100. * s.fracAnode, 1) << "%"
+              << " ± " << FormatNumber(100. * s.semFracAnode, 1)
+              << ", bottom-Cu " << FormatNumber(100. * s.fracBottomCu, 1) << "%"
+              << ", top-Cu " << FormatNumber(100. * s.fracTopCu, 1) << "%"
+              << ", unresolved " << FormatNumber(100. * fracUnres, 1) << "%"
+              << "   anode/total = " << FormatNumber(s.fracAnode, 3)
+              << ", ⟨gain⟩ = " << FormatNumber(s.meanAvalancheSize, 0) << "\n";
+    if (fracUnres > 0.05)
+      std::cout << "  [collection] note: " << FormatNumber(100. * fracUnres, 0)
+                << "% of produced electrons did not resolve within the time window — "
+                   "raise time_window_ns for a cleaner measurement.\n";
   }
   return s;
 }

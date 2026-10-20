@@ -65,7 +65,8 @@ class SweepRunner(QThread):
     stopped   = pyqtSignal()
 
     def __init__(self, base_cfg: dict, gaps: list[float], events: int, release: str,
-                 out_dir: Path, force: bool = False, parent=None):
+                 out_dir: Path, force: bool = False,
+                 variable: str = "drift_gap_mm", drift_only: bool = True, parent=None):
         super().__init__(parent)
         self._base_cfg = base_cfg
         self._gaps     = gaps
@@ -73,8 +74,14 @@ class SweepRunner(QThread):
         self._release  = release
         self._out_dir  = Path(out_dir)
         self._force    = force
+        self._variable = variable          # "drift_gap_mm" | "induction_gap_mm"
+        self._drift_only = drift_only       # True = transparency, False = avalanche
         self._proc: subprocess.Popen | None = None
         self._stopped  = False
+        # run-name tag keeps drift/induction and transparency/avalanche runs separate so
+        # they neither collide nor wrongly reuse each other's cached result.
+        self._tag = ("drift" if variable == "drift_gap_mm" else "induction") + \
+                    ("_transp" if drift_only else "_aval")
 
     def stop(self):
         self._stopped = True
@@ -88,14 +95,15 @@ class SweepRunner(QThread):
             if self._stopped:
                 self.stopped.emit()
                 return
-            run_name = f"gap_{gap:.3f}mm"
+            run_name = f"{self._tag}_{gap:.3f}mm"
             summary = self._out_dir / run_name / "summary.csv"
             if summary.exists() and not self._force:
                 self.log_line.emit(f"gap {gap:.3f} mm: reusing cached result")
             else:
                 cfg_path = self._out_dir / f"{run_name}.json"
                 cfg_path.write_text(json.dumps(
-                    tvd.build_gap_config(self._base_cfg, gap, self._events, self._release),
+                    tvd.build_gap_config(self._base_cfg, gap, self._events, self._release,
+                                         variable=self._variable, drift_only=self._drift_only),
                     indent=2))
                 self.log_line.emit(f"gap {gap:.3f} mm: running (one-time solve if not cached)…")
                 try:
@@ -142,7 +150,7 @@ def _dspin(lo, hi, step, dec, val) -> QDoubleSpinBox:
 class TransparencyWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("THGEM electron transparency — drift-gap sweep")
+        self.setWindowTitle("THGEM gap scan — transparency / charge ratio")
         self.resize(1150, 680)
         self._base_cfg: dict = {}
         self._rows: list[dict] = []
@@ -173,7 +181,18 @@ class TransparencyWindow(QMainWindow):
         bv.addWidget(self.cfg_summary)
         v.addWidget(box)
 
-        box = QGroupBox("Drift-gap sweep"); f = QFormLayout(box)
+        box = QGroupBox("Scan"); f = QFormLayout(box)
+        self.scan_var = QComboBox()
+        self.scan_var.addItems(["Drift gap", "Induction gap"])
+        self.scan_var.currentIndexChanged.connect(self._on_mode_changed)
+        self.scan_mode = QComboBox()
+        self.scan_mode.addItems(["Transparency (single electron)", "Avalanche (with multiplication)"])
+        self.scan_mode.currentIndexChanged.connect(self._on_mode_changed)
+        f.addRow("Scan variable", self.scan_var)
+        f.addRow("Mode", self.scan_mode)
+        v.addWidget(box)
+
+        box = QGroupBox("Gap sweep"); f = QFormLayout(box)
         self.gap_min  = _dspin(0.01, 20.0, 0.1, 2, 0.1)
         self.gap_max  = _dspin(0.01, 20.0, 0.1, 2, 4.0)
         self.gap_step = _dspin(0.01, 10.0, 0.05, 2, 0.4)
@@ -224,14 +243,13 @@ class TransparencyWindow(QMainWindow):
     def _build_results_panel(self) -> QWidget:
         panel = QWidget(); v = QVBoxLayout(panel)
         self.canvas = MplCanvas()
-        self._reset_plot()
         v.addWidget(self.canvas, 1)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(
-            ["gap [mm]", "anode", "bottom-Cu", "anode/(a+b)", "attached"])
         self.table.setMaximumHeight(170)
         v.addWidget(self.table)
+
+        self._reset_results()
 
         row = QHBoxLayout()
         self.save_csv_btn = QPushButton("Save CSV"); self.save_csv_btn.setEnabled(False)
@@ -276,6 +294,7 @@ class TransparencyWindow(QMainWindow):
         cfg["fields"]["e_drift_kvcm"]     = self.e_drift.value()
         cfg["fields"]["delta_v_thgem_V"]  = self.delta_v.value()
         cfg["fields"]["e_induction_kvcm"] = self.e_induct.value()
+        cfg.setdefault("simulation", {})["enable_ion_drift"] = False   # electrons only
         return cfg
 
     def _on_run(self):
@@ -285,11 +304,15 @@ class TransparencyWindow(QMainWindow):
         if not gaps:
             QMessageBox.warning(self, "No gaps", "The gap range is empty."); return
         release = "random" if self.release_mode.currentIndex() == 0 else str(self.release_h.value())
-        self._rows.clear(); self.table.setRowCount(0); self._reset_plot(); self.log.clear()
-        self.log.appendPlainText(f"Sweeping {len(gaps)} gaps: {gaps} mm "
-                                 f"({self.events.value()} electrons each)")
+        variable = "drift_gap_mm" if self.scan_var.currentIndex() == 0 else "induction_gap_mm"
+        drift_only = not self._is_avalanche()
+        self._rows.clear(); self._reset_results(); self.log.clear()
+        self.log.appendPlainText(
+            f"Scanning {self._scan_label().lower()} — {'avalanche' if not drift_only else 'transparency'} "
+            f"mode, {len(gaps)} points: {gaps} mm ({self.events.value()} events each)")
         self._runner = SweepRunner(self._effective_base_cfg(), gaps, self.events.value(),
-                                   release, Path(self.out_dir.text()), self.force.isChecked())
+                                   release, Path(self.out_dir.text()), self.force.isChecked(),
+                                   variable=variable, drift_only=drift_only)
         self._runner.log_line.connect(lambda s: self.log.appendPlainText(s))
         self._runner.gap_done.connect(self._on_gap_done)
         self._runner.sweep_done.connect(lambda: self._finish("Sweep complete."))
@@ -312,44 +335,84 @@ class TransparencyWindow(QMainWindow):
         if error:
             QMessageBox.warning(self, "Sweep failed", msg)
 
+    # ── mode / scan helpers ──────────────────────────────────────────────────
+    def _is_avalanche(self) -> bool:
+        return self.scan_mode.currentIndex() == 1
+
+    def _scan_label(self) -> str:
+        return "Induction gap" if self.scan_var.currentIndex() == 1 else "Drift gap"
+
+    def _on_mode_changed(self, *_):
+        # Switching scan variable or mode invalidates the plotted rows; reset the view.
+        self._rows.clear()
+        self.save_csv_btn.setEnabled(False); self.save_png_btn.setEnabled(False)
+        # Avalanche points are full (slow) avalanches — nudge the event count down once.
+        if self._is_avalanche() and self.events.value() >= 1000:
+            self.events.setValue(50)
+        elif not self._is_avalanche() and self.events.value() < 1000:
+            self.events.setValue(2000)
+        self._reset_results()
+
+    def _title(self) -> str:
+        kind = "with multiplication (avalanche)" if self._is_avalanche() else "single electron"
+        return (f"Electron collection vs {self._scan_label().lower()} — {kind}")
+
     # ── results update ──────────────────────────────────────────────────────
     def _on_gap_done(self, res: dict):
         self._rows.append(res)
         self._rows.sort(key=lambda r: r["gap_mm"])
-        self.log.appendPlainText(
-            f"  → gap {res['gap_mm']:.3f} mm: anode {100*res['frac_anode']:.1f}%, "
-            f"bottom-Cu {100*res['frac_bottom_cu']:.1f}%, "
-            f"anode/(a+b) {res['anode_over_anode_plus_bottom']:.3f}")
+        msg = (f"  → gap {res['gap_mm']:.3f} mm: anode {100*res['frac_anode']:.1f}%, "
+               f"bottom-Cu {100*res['frac_bottom_cu']:.1f}%, "
+               f"anode/(a+b) {res['anode_over_anode_plus_bottom']:.3f}")
+        if self._is_avalanche():
+            msg += f", gain {res['mean_avalanche_size']:.0f}"
+        self.log.appendPlainText(msg)
         self._refresh_table(); self._refresh_plot()
+
+    def _reset_results(self):
+        """Reset the plot and table headers for the current scan variable + mode.
+
+        Both modes report electron-collection fractions (electrons collected at an
+        electrode / total produced); avalanche mode multiplies first and adds a gain
+        column.  In avalanche mode the anode fraction = the measurement's Anode/THGEM-top.
+        """
+        headers = [f"{self._scan_label()} [mm]", "anode", "bottom-Cu", "anode/(a+b)",
+                   "gain" if self._is_avalanche() else "attached"]
+        self.table.setRowCount(0)
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        ax = self.canvas.ax; ax.clear()
+        ax.set_xlabel(f"{self._scan_label()} [mm]")
+        ax.set_ylabel("Electrons collected / total produced")
+        ax.set_title(self._title())
+        ax.set_ylim(0, 1.05); ax.grid(True, alpha=0.3)
+        self.canvas.figure.tight_layout(); self.canvas.draw()
 
     def _refresh_table(self):
         self.table.setRowCount(len(self._rows))
         for i, r in enumerate(self._rows):
+            last = (f"{r['mean_avalanche_size']:.0f}" if self._is_avalanche()
+                    else f"{r['frac_attached']:.3f}")
             vals = [f"{r['gap_mm']:.3f}", f"{r['frac_anode']:.3f}",
-                    f"{r['frac_bottom_cu']:.3f}", f"{r['anode_over_anode_plus_bottom']:.3f}",
-                    f"{r['frac_attached']:.3f}"]
+                    f"{r['frac_bottom_cu']:.3f}", f"{r['anode_over_anode_plus_bottom']:.3f}", last]
             for j, s in enumerate(vals):
                 self.table.setItem(i, j, QTableWidgetItem(s))
-
-    def _reset_plot(self):
-        ax = self.canvas.ax; ax.clear()
-        ax.set_xlabel("Drift gap [mm]"); ax.set_ylabel("Fraction of electrons")
-        ax.set_title("Electron transparency vs drift gap (no multiplication)")
-        ax.set_ylim(0, 1.05); ax.grid(True, alpha=0.3)
-        self.canvas.figure.tight_layout(); self.canvas.draw()
 
     def _refresh_plot(self):
         ax = self.canvas.ax; ax.clear()
         x = [r["gap_mm"] for r in self._rows]
+        anode_lbl = ("anode / total produced" if self._is_avalanche()
+                     else "anode fraction (of all)")
         ax.errorbar(x, [r["frac_anode"] for r in self._rows],
                     yerr=[r["sem_frac_anode"] for r in self._rows],
-                    marker="o", capsize=3, label="anode fraction (of all)")
+                    marker="o", capsize=3, label=anode_lbl)
         ax.plot(x, [r["anode_over_anode_plus_bottom"] for r in self._rows],
                 marker="s", ls="--", label="anode / (anode + bottom Cu)")
         ax.plot(x, [r["frac_bottom_cu"] for r in self._rows],
                 marker="^", ls=":", label="bottom-Cu fraction")
-        ax.set_xlabel("Drift gap [mm]"); ax.set_ylabel("Fraction of electrons")
-        ax.set_title("Electron transparency vs drift gap (no multiplication)")
+        ax.set_xlabel(f"{self._scan_label()} [mm]")
+        ax.set_ylabel("Electrons collected / total produced")
+        ax.set_title(self._title())
         ax.set_ylim(0, 1.05); ax.grid(True, alpha=0.3); ax.legend(fontsize=8)
         self.canvas.figure.tight_layout(); self.canvas.draw()
 

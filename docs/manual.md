@@ -501,8 +501,11 @@ multiplication** and tallies where it ends — anode / THGEM bottom copper / top
 **electron-transparency / collection-efficiency** studies. The fractions (with binomial errors) go to
 `summary.csv` (`frac_anode`, `frac_bottom_cu`, …, `anode_over_anode_plus_bottom`) and the run log.
 `scripts/transparency_vs_drift.py` sweeps this across drift gaps and plots the fraction vs drift gap,
-and `python3 gui/transparency_app.py` is a **dedicated GUI** for that sweep (set the gap range / fields
-/ events, run, and watch the fraction-vs-drift-gap plot build up live).
+and `python3 gui/transparency_app.py` is a **dedicated gap-scan GUI**: it scans the **drift or induction
+gap**, in **transparency** (single-electron) or **avalanche** (with multiplication) mode — both report
+electron-**collection** fractions (electrons collected at an electrode / total produced, no induced
+signals; in avalanche mode the anode fraction = the measured Anode/THGEM-top ratio) — building the plot
+up live as each point completes.
 `ctest --test-dir build`
 runs the `smoke_thgem_sim` config (coarse mesh, committed caches) from the project root.
 

@@ -54,10 +54,18 @@ def parse_args() -> argparse.Namespace:
 
 # ── Reusable, import-friendly helpers (shared with gui/transparency_app.py) ──────
 
-#: Fraction columns read back from a run's summary.csv.
+#: Fraction columns read back from a run's summary.csv (drift-only / transparency mode).
 FRACTION_KEYS = (
     "frac_anode", "sem_frac_anode", "frac_bottom_cu", "sem_frac_bottom_cu",
     "frac_top_cu", "frac_attached", "anode_over_anode_plus_bottom",
+)
+
+#: Charge columns read back from a run's summary.csv (avalanche mode). The sim's
+#: mean_charge_ratio is Q_top/Q_anode; the measurement's "Anode/THGEM-top" is its inverse.
+CHARGE_KEYS = (
+    "mean_anode_charge_fC", "sem_anode_charge_fC",
+    "mean_thgem_top_charge_fC", "sem_thgem_top_charge_fC",
+    "mean_charge_ratio", "mean_avalanche_size",
 )
 
 
@@ -70,15 +78,19 @@ def gap_range(lo: float, hi: float, step: float) -> list[float]:
     return vals
 
 
-def build_gap_config(base_cfg: dict, gap: float, events: int, release: str) -> dict:
-    """A deep copy of base_cfg set up for a drift-only transparency run at one drift gap.
+def build_gap_config(base_cfg: dict, gap: float, events: int, release: str,
+                     variable: str = "drift_gap_mm", drift_only: bool = True) -> dict:
+    """A deep copy of base_cfg set up for one sweep point.
 
-    release = "random" releases electrons uniformly over the drift gap; any other value
-    is parsed as a fixed release height in mm above the top copper.
+    variable   = which geometry key the sweep varies ("drift_gap_mm" or "induction_gap_mm").
+    drift_only = True for the no-multiplication transparency study; False for the full
+                 avalanche (per-electrode charge / charge-ratio) study.
+    release    = "random" releases electrons uniformly over the drift gap; any other value
+                 is parsed as a fixed release height in mm above the top copper.
     """
     cfg = json.loads(json.dumps(base_cfg))  # deep copy
-    cfg["geometry"]["drift_gap_mm"] = gap
-    cfg["simulation"]["drift_only"] = True
+    cfg["geometry"][variable] = gap
+    cfg["simulation"]["drift_only"] = drift_only
     cfg["simulation"]["n_events"] = events
     if str(release) == "random":
         cfg["source"]["source_distances_mm"] = None
@@ -88,10 +100,21 @@ def build_gap_config(base_cfg: dict, gap: float, events: int, release: str) -> d
 
 
 def parse_summary(summary_csv: Path, gap: float | None = None) -> dict:
-    """The transparency fractions from a run's summary.csv (last source-point row)."""
+    """Transparency fractions *and* avalanche charges from a run's summary.csv (last row).
+
+    Columns absent for the run's mode default to 0.0, so the caller can plot whichever set
+    applies.  Adds a derived ``anode_over_top`` = Q_anode / Q_top (the measurement's
+    Anode/THGEM-top ratio), guarded against a ~0 denominator.
+    """
     row = list(csv.DictReader(Path(summary_csv).open()))[-1]
     out = {"gap_mm": gap} if gap is not None else {}
-    out.update({k: float(row[k]) for k in FRACTION_KEYS})
+    for k in (*FRACTION_KEYS, *CHARGE_KEYS):
+        try:
+            out[k] = float(row.get(k, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            out[k] = 0.0
+    qt = out.get("mean_thgem_top_charge_fC", 0.0)
+    out["anode_over_top"] = (out.get("mean_anode_charge_fC", 0.0) / qt) if abs(qt) > 1e-12 else 0.0
     return out
 
 
