@@ -91,6 +91,10 @@ def build_gap_config(base_cfg: dict, gap: float, events: int, release: str,
     cfg = json.loads(json.dumps(base_cfg))  # deep copy
     cfg["geometry"][variable] = gap
     cfg["simulation"]["drift_only"] = drift_only
+    # The avalanche study is collection-only: multiply, tally where electrons land, but
+    # no induced signals.  collect_only tells the binary to skip the weighting fields
+    # (unused here), which cuts field sampling ~4x.  (drift_only already implies it.)
+    cfg["simulation"]["collect_only"] = not drift_only
     cfg["simulation"]["n_events"] = events
     if str(release) == "random":
         cfg["source"]["source_distances_mm"] = None

@@ -176,6 +176,13 @@ struct SimulationConfig {
   // (anode / THGEM bottom copper / top copper / attached) — for electron-transparency
   // and collection-efficiency studies.  Independent of the field-only (n_events == 0) mode.
   bool        driftOnly        = false;
+  // Collection-only avalanche: multiply (unlike driftOnly) and tally where every
+  // avalanche electron is collected, but skip the induced-signal machinery — no
+  // weighting-field sampling, no read-out electrodes, no Shockley–Ramo signal.  The
+  // observable is the collected-charge fraction (anode / total produced), which needs
+  // only the transport field, so sampling drops ~4x (one field, not four) and a finer
+  // grid becomes tractable.  collectOnly := driftOnly || collectOnly (see main()).
+  bool        collectOnly      = false;
   double      ionMaxStepUm     = 5.0;
   // Wall-clock safety bound for ion drift (AvalancheMC).  Ions are ~1000x slower
   // than electrons; distance-stepping bounds a normal ion by geometry, and this
@@ -548,6 +555,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.enableIonDrift   = ReadBool  (*s, "simulation", "enable_ion_drift",   cfg.simulation.enableIonDrift);
     cfg.simulation.storeDriftLines  = ReadBool  (*s, "simulation", "store_drift_lines",  cfg.simulation.storeDriftLines);
     cfg.simulation.driftOnly        = ReadBool  (*s, "simulation", "drift_only",         cfg.simulation.driftOnly);
+    cfg.simulation.collectOnly      = ReadBool  (*s, "simulation", "collect_only",       cfg.simulation.collectOnly);
     cfg.simulation.ionMaxStepUm     = ReadDouble(*s, "simulation", "ion_max_step_um",    cfg.simulation.ionMaxStepUm);
     cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
     cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
@@ -1121,8 +1129,13 @@ void SetupSensor(Sensor& sensor, ComponentGrid& grid,
                  std::array<ComponentGrid, 3>& wgrids,
                  const ThgemGeom& g, const SimulationConfig& sim, int gridNz) {
   sensor.AddComponent(&grid);            // transport field + drift medium
-  for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
-    sensor.AddElectrode(&wgrids[e], kReadoutIds[e]);
+  // Collection-only runs carry no weighting fields (none were sampled), so add no
+  // read-out electrodes; the transport field and drift area below are all the
+  // collection tally needs.
+  if (!sim.collectOnly) {
+    for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+      sensor.AddElectrode(&wgrids[e], kReadoutIds[e]);
+    }
   }
 
   const std::size_t nBins =
@@ -1383,6 +1396,10 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // or attached — and the endpoint z says *which* electrode.  Anode = extracted through
   // the hole and collected below the plate; the copper faces absorb on contact.
   const bool driftOnly = sim.driftOnly;
+  // Collection-only avalanche: multiply, tally collection, but no induced signals
+  // (resolved in main(): driftOnly implies it).  Skips the GetSignal/charge/amplifier
+  // block, which needs weighting fields that a collection-only run never sampled.
+  const bool collectOnly = sim.collectOnly;
   std::map<std::string, long> collectTally;   // category → count
   // Classify by *where* the electron ended (robust: absorption on a solid does not always
   // carry a distinct Garfield status).  An electron that attached in the gas is tagged by
@@ -1566,7 +1583,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     // changing the anode signal.  DriftIon clears its ion container each call, so
     // GetIons() holds exactly the ion just drifted (with its full trajectory).
     ionX.clear(); ionY.clear(); ionZ.clear(); ionNpts.clear();
-    if (sim.enableIonDrift) {
+    if (sim.enableIonDrift && !collectOnly) {
       const std::size_t nIons = (sim.maxIonsDrifted > 0)
           ? std::min(nEp, sim.maxIonsDrifted) : nEp;
       for (std::size_t i = 0; i < nIons; ++i) {
@@ -1600,6 +1617,11 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       }
     }
 
+    // Induced-signal readout, charge integration, amplifier output and the per-event
+    // signal tree all need the weighting fields / read-out electrodes, which a
+    // collection-only run never sampled — skip them (its observable is the
+    // electron-collection tally above).
+    if (!collectOnly) {
     // Bin the induced current [fC/ns] on each read-out electrode (anode pad, THGEM
     // top copper, THGEM bottom copper), from their neBEM weighting fields.
     for (std::size_t k = 0; k < nBins; ++k) {
@@ -1687,6 +1709,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       hRatio.Fill(ratio);
       chargeRatios.push_back(ratio);
     }
+    }  // end if (!collectOnly)
 
     if (ev == 0) {
       const double dt =
@@ -1979,6 +2002,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"enable_ion_drift",   cfg.simulation.enableIonDrift},
       {"store_drift_lines",  cfg.simulation.storeDriftLines},
       {"drift_only",         cfg.simulation.driftOnly},
+      {"collect_only",       cfg.simulation.collectOnly},
       {"ion_max_step_um",    cfg.simulation.ionMaxStepUm},
       {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
       {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
@@ -2038,6 +2062,13 @@ int main(int argc, char* argv[]) {
     cfg.simulation.driftOnly = cfg.simulation.driftOnly || opts.driftOnly;
     const bool driftOnly = cfg.simulation.driftOnly && !fieldOnly;
 
+    // Collection-only mode — avalanche multiplication but no induced-signal machinery
+    // (weighting fields, read-out electrodes, Shockley–Ramo signals).  drift_only
+    // implies it.  Never in field-only mode, whose job is to produce the weighting maps.
+    // The collection observable needs only the transport field, so sampling drops ~4x.
+    cfg.simulation.collectOnly = (cfg.simulation.collectOnly || driftOnly) && !fieldOnly;
+    const bool collectOnly = cfg.simulation.collectOnly;
+
     const fs::path runDir = opts.outDir /
         (opts.runName.empty() ? BuildRunFolderName(cfg) : opts.runName);
     EnsureDirectory(runDir);
@@ -2075,6 +2106,9 @@ int main(int argc, char* argv[]) {
     else if (driftOnly)
       std::cout << "  mode    : drift only (no multiplication) — single-electron "
                    "transport, tally the collection fate\n";
+    else if (collectOnly)
+      std::cout << "  mode    : collection only (avalanche, no induced signals) — tally "
+                   "electron collection, skip the weighting fields\n";
 
     using Clock = std::chrono::steady_clock;
     auto secsSince = [](Clock::time_point t0) {
@@ -2149,16 +2183,20 @@ int main(int argc, char* argv[]) {
     }
     std::array<bool, 3> haveW{};
     bool haveAllW = true;
-    for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
-      if (fs::exists(wCaches[e]) &&
-          wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true)) {
-        haveW[e] = true;
-      } else {
-        haveAllW = false;
+    // Collection-only runs carry no weighting fields; leave haveAllW true so the neBEM
+    // solve below is triggered only by a missing *transport* field.
+    if (!collectOnly) {
+      for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+        if (fs::exists(wCaches[e]) &&
+            wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true)) {
+          haveW[e] = true;
+        } else {
+          haveAllW = false;
+        }
       }
+      if (haveField && haveAllW)
+        std::cout << "Loaded cached electrode weighting fields (anode, THGEM top, bottom).\n";
     }
-    if (haveField && haveAllW)
-      std::cout << "Loaded cached electrode weighting fields (anode, THGEM top, bottom).\n";
 
     // A single neBEM solve serves the transport field and all three weighting fields,
     // so initialise if *any* is missing.  (On a pure cache hit neBEM is never
@@ -2182,18 +2220,22 @@ int main(int argc, char* argv[]) {
           throw std::runtime_error("Failed to load freshly sampled transport field: "
                                    + fieldCache);
       }
-      for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
-        if (haveW[e]) continue;
-        std::cout << "  Sampling " << kReadoutIds[e] << " weighting field onto the grid...\n";
-        if (!wgrids[e].SaveWeightingField(&detector.Component(), kReadoutIds[e],
-                                          wCaches[e], "xyz") ||
-            !wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true))
-          throw std::runtime_error("Failed to sample the " + kReadoutIds[e] +
-                                   " weighting field.");
+      if (!collectOnly) {
+        for (std::size_t e = 0; e < kReadoutIds.size(); ++e) {
+          if (haveW[e]) continue;
+          std::cout << "  Sampling " << kReadoutIds[e] << " weighting field onto the grid...\n";
+          if (!wgrids[e].SaveWeightingField(&detector.Component(), kReadoutIds[e],
+                                            wCaches[e], "xyz") ||
+              !wgrids[e].LoadWeightingField(wCaches[e], "xyz", /*withPotential=*/true))
+            throw std::runtime_error("Failed to sample the " + kReadoutIds[e] +
+                                     " weighting field.");
+        }
       }
     }
     grid.SetMedium(&gas);   // must follow SetMesh(): SetMesh() calls Reset().
-    std::cout << "  [timing] transport + weighting fields: "
+    std::cout << "  [timing] "
+              << (collectOnly ? "transport field (collection-only: weighting skipped): "
+                              : "transport + weighting fields: ")
               << FormatNumber(secsSince(tField), 1) << " s\n";
 
     Sensor sensor;
@@ -2208,8 +2250,9 @@ int main(int argc, char* argv[]) {
     TDirectory* fieldDir   = rootFile.mkdir("field");
     auto tDump = Clock::now();
     DumpFieldMap(grid, g, fieldDir);
-    for (std::size_t e = 0; e < kReadoutIds.size(); ++e)
-      DumpWeightingMap(fieldDir, kReadoutIds[e], wgrids[e], g);
+    if (!collectOnly)   // no weighting fields were sampled in collection-only runs
+      for (std::size_t e = 0; e < kReadoutIds.size(); ++e)
+        DumpWeightingMap(fieldDir, kReadoutIds[e], wgrids[e], g);
     std::cout << "  [timing] field-map dump: " << FormatNumber(secsSince(tDump), 1) << " s\n";
 
     if (fieldOnly) {
