@@ -128,6 +128,15 @@ struct FieldConfig {
   double eDriftKvcm     = 0.5;    // drift-gap field [kV/cm]
   double deltaVThgemV   = 800.0;  // voltage across the THGEM (top→bottom Cu) [V]
   double eInductionKvcm = 3.0;    // induction-gap field [kV/cm]
+  // Diagnostic (field-only runs): dump the raw neBEM field and the grid-interpolated
+  // field on a fine x–z slice over the bottom-copper edge / hole exit, to check whether
+  // the ComponentGrid sampling corrupts the field near the thin copper.
+  bool   dumpRawField   = false;
+  // Diagnostic: transport electrons on the *raw* neBEM field (ComponentNeBem3d) instead
+  // of the sampled ComponentGrid.  ~10³× slower per field query (only for small runs),
+  // but resolves the sharp field at the copper edge that the grid smears.  Absorption
+  // then uses the real conductor media via the geometry, not the grid in-solid flag.
+  bool   useRawNebem    = false;
 };
 
 struct SourceConfig {
@@ -139,6 +148,10 @@ struct SourceConfig {
   // Fixed x-position within the unit cell [cm]; nullopt → random over the cell.
   // (y is always sampled uniformly over the cell.)
   std::optional<std::vector<double>> fixedXCmList;
+  // Diagnostic: release the (drift-only) electron directly at this absolute z [cm],
+  // bypassing the drift-gap height — e.g. inside the hole near the wall to probe where
+  // the field steers it.  nullopt → the normal drift-gap release above the top copper.
+  std::optional<double> releaseZCm = std::nullopt;
 };
 
 struct GasConfig {
@@ -149,6 +162,11 @@ struct GasConfig {
   double temperatureK        = 293.15;
   double pressureTorr        = 760.0;
   bool   enablePenning       = true;
+  // Diagnostic: zero the electron-attachment coefficient after the table is loaded
+  // (Medium::ResetElectronAttachment), so no electron is lost to attachment.  Used to
+  // test whether (over-estimated) attachment in the intermediate-field transition zones
+  // is masking electron collection on the bottom copper.  Does not touch the cache.
+  bool   disableAttachment   = false;
   int    nCollisions         = 2;
   double maxElectronEnergyEV = 2000.0;  // EFINAL of the Magboltz table (keys the .gas file name)
   // Ceiling of the microscopic collision-rate table.  AvalancheMicroscopic samples
@@ -267,6 +285,7 @@ struct DistanceSummary {
   double      fracBottomCu      = 0.;   // collected on the THGEM bottom copper
   double      semFracBottomCu   = 0.;
   double      fracTopCu         = 0.;   // collected on the THGEM top copper
+  double      fracDielectric    = 0.;   // stopped on the dielectric hole wall
   double      fracAttached      = 0.;   // attached in the gas
   double      anodeOverAnodePlusBottom = 0.;  // anode / (anode + bottom copper)
 };
@@ -506,6 +525,8 @@ Config LoadConfig(const fs::path& path) {
     cfg.fields.eDriftKvcm     = ReadDouble(*f, "fields", "e_drift_kvcm",     cfg.fields.eDriftKvcm);
     cfg.fields.deltaVThgemV   = ReadDouble(*f, "fields", "delta_v_thgem_V",  cfg.fields.deltaVThgemV);
     cfg.fields.eInductionKvcm = ReadDouble(*f, "fields", "e_induction_kvcm", cfg.fields.eInductionKvcm);
+    cfg.fields.dumpRawField   = ReadBool  (*f, "fields", "dump_raw_field",   cfg.fields.dumpRawField);
+    cfg.fields.useRawNebem    = ReadBool  (*f, "fields", "use_raw_nebem",    cfg.fields.useRawNebem);
   }
 
   if (const auto* s = FindSection(root, "source")) {
@@ -527,6 +548,8 @@ Config LoadConfig(const fs::path& path) {
     } else {
       cfg.source.fixedXCmList = std::nullopt;
     }
+    if (const auto* rz = FindMember(*s, "release_z_cm", {"source", "release_z_cm"}))
+      if (rz->is_number()) cfg.source.releaseZCm = rz->get<double>();
   }
 
   if (const auto* g = FindSection(root, "gas")) {
@@ -537,6 +560,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.gas.temperatureK  = ReadDouble(*g, "gas", "temperature_K",       cfg.gas.temperatureK);
     cfg.gas.pressureTorr  = ReadDouble(*g, "gas", "pressure_Torr",       cfg.gas.pressureTorr);
     cfg.gas.enablePenning = ReadBool  (*g, "gas", "enable_penning",       cfg.gas.enablePenning);
+    cfg.gas.disableAttachment = ReadBool(*g, "gas", "disable_attachment", cfg.gas.disableAttachment);
     cfg.gas.nCollisions         = ReadInt   (*g, "gas", "n_magboltz_collisions",  cfg.gas.nCollisions);
     cfg.gas.maxElectronEnergyEV = ReadDouble(*g, "gas", "max_electron_energy_eV", cfg.gas.maxElectronEnergyEV);
     cfg.gas.transportMaxEnergyEV = ReadDouble(*g, "gas", "transport_max_energy_eV",
@@ -717,6 +741,13 @@ std::string SetupGas(MediumMagboltz& gas, const GasConfig& cfg,
       std::cerr << "  Warning: Penning transfer could not be enabled.\n";
     else
       std::cout << "  Penning transfer enabled.\n";
+  }
+
+  // Diagnostic: zero the attachment coefficient so no electron is lost to attachment.
+  if (cfg.disableAttachment) {
+    gas.ResetElectronAttachment();
+    std::cout << "  [diagnostic] electron attachment DISABLED "
+                 "(ResetElectronAttachment).\n";
   }
 
   const char* garfieldInstall = std::getenv("GARFIELD_INSTALL");
@@ -1127,8 +1158,12 @@ std::string DeriveWeightingCacheName(const GeometryConfig& g, const std::string&
 // copper), each holding that electrode's neBEM weighting field sampled onto the grid.
 void SetupSensor(Sensor& sensor, ComponentGrid& grid,
                  std::array<ComponentGrid, 3>& wgrids,
-                 const ThgemGeom& g, const SimulationConfig& sim, int gridNz) {
-  sensor.AddComponent(&grid);            // transport field + drift medium
+                 const ThgemGeom& g, const SimulationConfig& sim, int gridNz,
+                 Garfield::Component* rawField = nullptr) {
+  // Diagnostic: transport on the raw neBEM field (resolves the copper-edge field the
+  // grid smears; media/absorption come from the geometry).  Default: the sampled grid.
+  if (rawField) sensor.AddComponent(rawField);
+  else          sensor.AddComponent(&grid);  // sampled transport field + drift medium
   // Collection-only runs carry no weighting fields (none were sampled), so add no
   // read-out electrodes; the transport field and drift area below are all the
   // collection tally needs.
@@ -1368,7 +1403,8 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // Avalanche-mode electron-collection fractions, one entry per event: where the
   // produced electrons physically end up (collected at the anode / THGEM copper),
   // with the total number of produced electrons as the denominator.
-  std::vector<double> collAnodeFrac, collTopCuFrac, collBottomCuFrac, collUnresFrac;
+  std::vector<double> collAnodeFrac, collTopCuFrac, collBottomCuFrac, collUnresFrac,
+                      collDielectricFrac, collAttachedFrac;
   anodeCharges.reserve(sim.nEvents);
   topCharges.reserve(sim.nEvents);
   botCharges.reserve(sim.nEvents);
@@ -1445,6 +1481,8 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
                                std::max(1, cfg.geometry.gridNz - 1);
     const double zTopLimit = std::max(g.zTopCuTop + 1.e-4, g.zDrift - zCellMargin - 1.e-4);
     z0 = std::max(g.zTopCuTop + 1.e-4, std::min(zTopLimit, z0));
+    // Diagnostic override: release directly at an absolute z (e.g. inside the hole).
+    if (cfg.source.releaseZCm.has_value()) z0 = *cfg.source.releaseZCm;
 
     // Transport one representative electron and scale by nPrimary (see tgc note).
     ++nInteracted;
@@ -1490,22 +1528,27 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     // collected (anode / THGEM copper), so frac_anode = electrons reaching the anode /
     // total produced — the no-induced-signal "Anode/THGEM-top" of the measurement.
     if (nEp > 0) {
-      long nColAnode = 0, nColTopCu = 0, nColBottomCu = 0, nColUnres = 0;
+      long nColAnode = 0, nColTopCu = 0, nColBottomCu = 0, nColUnres = 0,
+           nColDielectric = 0, nColAttached = 0;
       for (std::size_t i = 0; i < nEp; ++i) {
         double ex0, ey0, ez0, et0, ee0, ex1, ey1, ez1, et1, ee1; int est;
         aval.GetElectronEndpoint(i, ex0, ey0, ez0, et0, ee0,
                                     ex1, ey1, ez1, et1, ee1, est);
         const std::string cat = categorizeCollection(est, ex1, ey1, ez1);
-        if      (cat == "anode")     ++nColAnode;
-        else if (cat == "top_cu")    ++nColTopCu;
-        else if (cat == "bottom_cu") ++nColBottomCu;
-        else if (cat == "drift")     ++nColUnres;   // still drifting at the time window
+        if      (cat == "anode")      ++nColAnode;
+        else if (cat == "top_cu")     ++nColTopCu;
+        else if (cat == "bottom_cu")  ++nColBottomCu;
+        else if (cat == "dielectric") ++nColDielectric;
+        else if (cat == "attached")   ++nColAttached;
+        else if (cat == "drift")      ++nColUnres;   // still drifting at the time window
       }
       const double tot = static_cast<double>(nEp);
       collAnodeFrac.push_back(nColAnode / tot);
       collTopCuFrac.push_back(nColTopCu / tot);
       collBottomCuFrac.push_back(nColBottomCu / tot);
       collUnresFrac.push_back(nColUnres / tot);
+      collDielectricFrac.push_back(nColDielectric / tot);
+      collAttachedFrac.push_back(nColAttached / tot);
     }
 
     // Primary electron drift line (track 0).
@@ -1793,14 +1836,16 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     s.fracBottomCu    = frac("bottom_cu");
     s.semFracBottomCu = binErr(s.fracBottomCu);
     s.fracTopCu       = frac("top_cu");
+    s.fracDielectric  = frac("dielectric");
     s.fracAttached    = frac("attached");
     const double denom = s.fracAnode + s.fracBottomCu;
     s.anodeOverAnodePlusBottom = denom > 0. ? s.fracAnode / denom : 0.;
-    const double fracDrift = frac("drift") + frac("dielectric");  // unresolved + hole-wall
+    const double fracDrift = frac("drift");   // still drifting at the time-window end
     std::cout << "  [transparency] anode " << FormatNumber(100. * s.fracAnode, 1) << "%"
               << " ± " << FormatNumber(100. * s.semFracAnode, 1)
               << ", bottom-Cu " << FormatNumber(100. * s.fracBottomCu, 1) << "%"
               << ", top-Cu " << FormatNumber(100. * s.fracTopCu, 1) << "%"
+              << ", dielectric " << FormatNumber(100. * s.fracDielectric, 1) << "%"
               << ", attached " << FormatNumber(100. * s.fracAttached, 1) << "%"
               << ", unresolved " << FormatNumber(100. * fracDrift, 1) << "%"
               << "   anode/(anode+bottom) = "
@@ -1818,6 +1863,8 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     s.fracBottomCu    = Mean(collBottomCuFrac);
     s.semFracBottomCu = Sem(Rms(collBottomCuFrac, s.fracBottomCu), collBottomCuFrac.size());
     s.fracTopCu       = Mean(collTopCuFrac);
+    s.fracDielectric  = Mean(collDielectricFrac);
+    s.fracAttached    = Mean(collAttachedFrac);
     const double denom = s.fracAnode + s.fracBottomCu;
     s.anodeOverAnodePlusBottom = denom > 0. ? s.fracAnode / denom : 0.;
     const double fracUnres = Mean(collUnresFrac);
@@ -1825,6 +1872,8 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
               << " ± " << FormatNumber(100. * s.semFracAnode, 1)
               << ", bottom-Cu " << FormatNumber(100. * s.fracBottomCu, 1) << "%"
               << ", top-Cu " << FormatNumber(100. * s.fracTopCu, 1) << "%"
+              << ", dielectric " << FormatNumber(100. * s.fracDielectric, 1) << "%"
+              << ", attached " << FormatNumber(100. * s.fracAttached, 1) << "%"
               << ", unresolved " << FormatNumber(100. * fracUnres, 1) << "%"
               << "   anode/total = " << FormatNumber(s.fracAnode, 3)
               << ", ⟨gain⟩ = " << FormatNumber(s.meanAvalancheSize, 0) << "\n";
@@ -1897,7 +1946,7 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
        "mean_charge_ratio,rms_charge_ratio,sem_charge_ratio,"
        "mean_primary_electrons,mean_avalanche_size,"
        "frac_anode,sem_frac_anode,frac_bottom_cu,sem_frac_bottom_cu,"
-       "frac_top_cu,frac_attached,anode_over_anode_plus_bottom\n";
+       "frac_top_cu,frac_dielectric,frac_attached,anode_over_anode_plus_bottom\n";
 
   f << std::fixed << std::setprecision(6);
   for (const auto& s : sums) {
@@ -1927,6 +1976,7 @@ void WriteSummaryCsv(const fs::path& path, const std::vector<DistanceSummary>& s
       << s.fracBottomCu              << ','
       << s.semFracBottomCu           << ','
       << s.fracTopCu                 << ','
+      << s.fracDielectric            << ','
       << s.fracAttached              << ','
       << s.anodeOverAnodePlusBottom  << '\n';
   }
@@ -1961,7 +2011,9 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
     {"fields", {
       {"e_drift_kvcm",     cfg.fields.eDriftKvcm},
       {"delta_v_thgem_V",  cfg.fields.deltaVThgemV},
-      {"e_induction_kvcm", cfg.fields.eInductionKvcm}
+      {"e_induction_kvcm", cfg.fields.eInductionKvcm},
+      {"dump_raw_field",   cfg.fields.dumpRawField},
+      {"use_raw_nebem",    cfg.fields.useRawNebem}
     }},
     // Derived electrode potentials [V] and cell geometry [cm], echoed for the GUI.
     {"derived", {
@@ -1986,6 +2038,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"temperature_K",          cfg.gas.temperatureK},
       {"pressure_Torr",          cfg.gas.pressureTorr},
       {"enable_penning",         cfg.gas.enablePenning},
+      {"disable_attachment",     cfg.gas.disableAttachment},
       {"n_magboltz_collisions",  cfg.gas.nCollisions},
       {"max_electron_energy_eV", cfg.gas.maxElectronEnergyEV},
       {"transport_max_energy_eV", cfg.gas.transportMaxEnergyEV},
@@ -2201,6 +2254,7 @@ int main(int argc, char* argv[]) {
     // A single neBEM solve serves the transport field and all three weighting fields,
     // so initialise if *any* is missing.  (On a pure cache hit neBEM is never
     // initialised, which is why each weighting field needs its own cache.)
+    bool neBemSolved = false;
     if (!haveField || !haveAllW) {
       std::cout << (haveField
         ? "\nTransport field was cached but an electrode weighting field is not — "
@@ -2210,6 +2264,7 @@ int main(int argc, char* argv[]) {
       if (!detector.Initialise())
         throw std::runtime_error("neBEM Initialise() failed — try a coarser mesh "
                                  "(larger target_element_size_um / fewer periodic_copies).");
+      neBemSolved = true;
       std::cout << "  neBEM solved (" << detector.Component().GetNumberOfElements()
                 << " boundary elements).\n";
       if (!haveField) {
@@ -2238,8 +2293,18 @@ int main(int argc, char* argv[]) {
                               : "transport + weighting fields: ")
               << FormatNumber(secsSince(tField), 1) << " s\n";
 
+    // Diagnostic: transport on the raw neBEM field needs the solve (force it on a cache hit).
+    if (cfg.fields.useRawNebem && !neBemSolved) {
+      std::cout << "\n[use_raw_nebem] solving neBEM for raw-field transport...\n";
+      if (!detector.Initialise())
+        throw std::runtime_error("neBEM Initialise() failed for use_raw_nebem.");
+      neBemSolved = true;
+    }
     Sensor sensor;
-    SetupSensor(sensor, grid, wgrids, g, cfg.simulation, cfg.geometry.gridNz);
+    SetupSensor(sensor, grid, wgrids, g, cfg.simulation, cfg.geometry.gridNz,
+                cfg.fields.useRawNebem ? &detector.Component() : nullptr);
+    if (cfg.fields.useRawNebem)
+      std::cout << "  [use_raw_nebem] transporting on the raw neBEM field (slow).\n";
 
     // ROOT output.
     TFile rootFile((runDir / "thgem_sim.root").string().c_str(), "RECREATE");
@@ -2254,6 +2319,38 @@ int main(int argc, char* argv[]) {
       for (std::size_t e = 0; e < kReadoutIds.size(); ++e)
         DumpWeightingMap(fieldDir, kReadoutIds[e], wgrids[e], g);
     std::cout << "  [timing] field-map dump: " << FormatNumber(secsSince(tDump), 1) << " s\n";
+
+    // Diagnostic: raw neBEM field vs grid-interpolated field on a fine x–z slice over the
+    // bottom-copper edge / hole exit / return region, to check whether the ComponentGrid
+    // sampling corrupts the field near the thin copper.
+    if (cfg.fields.dumpRawField) {
+      if (!neBemSolved) {
+        std::cout << "\n[dump_raw_field] solving neBEM to query the raw field...\n";
+        if (!detector.Initialise())
+          throw std::runtime_error("neBEM Initialise() failed for dump_raw_field.");
+        neBemSolved = true;
+      }
+      const fs::path csv = runDir / "raw_vs_grid_field.csv";
+      std::ofstream out(csv.string());
+      out << std::setprecision(6)
+          << "x_cm,z_cm,in_gas,ex_raw,ez_raw,emag_raw,ex_grid,ez_grid,emag_grid\n";
+      auto& nebem = detector.Component();
+      const double x0 = 0.0, x1 = 0.035;        // 0 … 350 µm (axis → past the copper edge)
+      const double z0 = -0.032, z1 = -0.015;    // −320 … −150 µm (exit + bottom-Cu band)
+      const double step = 5.e-4;                // 5 µm
+      for (double z = z0; z <= z1 + 1e-9; z += step) {
+        for (double x = x0; x <= x1 + 1e-9; x += step) {
+          double exR=0,eyR=0,ezR=0,vR=0; Garfield::Medium* mR=nullptr; int sR=0;
+          nebem.ElectricField(x, 0., z, exR, eyR, ezR, vR, mR, sR);
+          double exG=0,eyG=0,ezG=0,vG=0; Garfield::Medium* mG=nullptr; int sG=0;
+          grid.ElectricField(x, 0., z, exG, eyG, ezG, vG, mG, sG);
+          out << x << ',' << z << ',' << (detector.InGas(x,0.,z) ? 1 : 0) << ','
+              << exR << ',' << ezR << ',' << std::hypot(exR,ezR) << ','
+              << exG << ',' << ezG << ',' << std::hypot(exG,ezG) << '\n';
+        }
+      }
+      std::cout << "[dump_raw_field] wrote " << csv << "\n";
+    }
 
     if (fieldOnly) {
       rootFile.Write();
