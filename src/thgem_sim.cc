@@ -107,6 +107,11 @@ struct GeometryConfig {
   double plateThicknessUm  = 400.0;   // dielectric foil thickness [µm]
   double copperThicknessUm = 35.0;    // copper cladding thickness per face [µm]
   double rimUm             = 0.0;     // etched dielectric clearance (v1: 0 → straight hole)
+  // Small chamfer on the copper's hole-facing inner edge [µm].  A perfectly sharp 90°
+  // copper edge is a field singularity the sampled transport grid cannot resolve
+  // (→ spurious over-extraction); a small, physically-realistic rounding (real drilled
+  // edges are not atomically sharp) regularises it so a feasible grid resolves it.
+  double edgeRoundUm       = 0.0;
   double driftGapMm        = 3.0;     // top-Cu surface → drift cathode [mm]
   double inductionGapMm    = 2.0;     // bottom-Cu surface → anode pad [mm]
   std::string dielectric   = "fr4";   // "fr4" | "kapton"
@@ -137,6 +142,13 @@ struct FieldConfig {
   // but resolves the sharp field at the copper edge that the grid smears.  Absorption
   // then uses the real conductor media via the geometry, not the grid in-solid flag.
   bool   useRawNebem    = false;
+  // Fill (inpaint) the sampled field *inside* conductor nodes with the neighbouring gas
+  // field, so the trilinear interpolation on the gas side of a conductor boundary is not
+  // poisoned by the (near-zero, oddly-directed) in-metal field.  Off by default: this was an
+  // attempt to tame the grid's reversed-field skin at the copper edge, but it does not fix the
+  // over-extraction (the edge field rotates sub-cell, below any uniform-grid resolution — see
+  // docs/extraction_ratio_investigation.md).  use_raw_nebem is the correct transport there.
+  bool   inpaintConductors = false;
 };
 
 struct SourceConfig {
@@ -509,6 +521,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.geometry.plateThicknessUm  = ReadDouble(*g, "geometry", "plate_thickness_um",  cfg.geometry.plateThicknessUm);
     cfg.geometry.copperThicknessUm = ReadDouble(*g, "geometry", "copper_thickness_um", cfg.geometry.copperThicknessUm);
     cfg.geometry.rimUm             = ReadDouble(*g, "geometry", "rim_um",              cfg.geometry.rimUm);
+    cfg.geometry.edgeRoundUm       = ReadDouble(*g, "geometry", "edge_round_um",       cfg.geometry.edgeRoundUm);
     cfg.geometry.driftGapMm        = ReadDouble(*g, "geometry", "drift_gap_mm",        cfg.geometry.driftGapMm);
     cfg.geometry.inductionGapMm    = ReadDouble(*g, "geometry", "induction_gap_mm",    cfg.geometry.inductionGapMm);
     cfg.geometry.dielectric        = ReadString(*g, "geometry", "dielectric_material", cfg.geometry.dielectric);
@@ -527,6 +540,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.fields.eInductionKvcm = ReadDouble(*f, "fields", "e_induction_kvcm", cfg.fields.eInductionKvcm);
     cfg.fields.dumpRawField   = ReadBool  (*f, "fields", "dump_raw_field",   cfg.fields.dumpRawField);
     cfg.fields.useRawNebem    = ReadBool  (*f, "fields", "use_raw_nebem",    cfg.fields.useRawNebem);
+    cfg.fields.inpaintConductors = ReadBool(*f, "fields", "inpaint_conductors", cfg.fields.inpaintConductors);
   }
 
   if (const auto* s = FindSection(root, "source")) {
@@ -603,6 +617,7 @@ Config LoadConfig(const fs::path& path) {
   if (gm.plateThicknessUm  <= 0.) throw std::runtime_error("geometry.plate_thickness_um must be positive");
   if (gm.copperThicknessUm <  0.) throw std::runtime_error("geometry.copper_thickness_um must be >= 0");
   if (gm.rimUm             <  0.) throw std::runtime_error("geometry.rim_um must be >= 0");
+  if (gm.edgeRoundUm       <  0.) throw std::runtime_error("geometry.edge_round_um must be >= 0");
   if (gm.driftGapMm        <= 0.) throw std::runtime_error("geometry.drift_gap_mm must be positive");
   if (gm.inductionGapMm    <= 0.) throw std::runtime_error("geometry.induction_gap_mm must be positive");
   if (gm.dielectric != "fr4" && gm.dielectric != "kapton")
@@ -789,6 +804,7 @@ std::string SetupGas(MediumMagboltz& gas, const GasConfig& cfg,
 struct ThgemGeom {
   double rHoleCm    = 0.;   // dielectric hole radius
   double rimCm      = 0.;   // copper etched back this far → copper hole = rHole + rim
+  double edgeRoundCm = 0.;  // chamfer on the copper hole-facing inner edge
   double pitchCm    = 0.;   // full cell size (square)
   double tDielCm    = 0.;
   double tCuCm      = 0.;
@@ -827,9 +843,14 @@ class ThgemDetector {
     // Copper is etched back from the dielectric hole edge by the rim, so the copper
     // openings are wider than the dielectric hole.
     const double rCu = geom_.rHoleCm + geom_.rimCm;
-    // Top copper cladding (box with hole), sitting on top of the dielectric.
+    // Chamfer: widen the copper hole by edgeRound on the hole-facing face only (a conical
+    // SolidHole, rlow≠rup), so the sharp inner corner the avalanche electrons approach
+    // becomes an obtuse, grid-resolvable edge.  edgeRound=0 → the original cylinder.
+    const double rCuEdge = rCu + geom_.edgeRoundCm;
+    // Top copper cladding (box with hole), sitting on top of the dielectric.  Its
+    // hole-facing face is the lower one → widen rlow.
     const double zTopCu = geom_.zDielHalf + geom_.tCuCm / 2.0;
-    auto topCu = std::make_unique<SolidHole>(0., 0., zTopCu, rCu,
+    auto topCu = std::make_unique<SolidHole>(0., 0., zTopCu, rCuEdge,
                                              rCu, hx, hy, geom_.tCuCm / 2.0);
     topCu->SetSectors(sec);
     topCu->SetBoundaryPotential(geom_.vTopCu);
@@ -846,9 +867,10 @@ class ThgemDetector {
     solids_.push_back(std::move(diel));
 
     // Bottom copper cladding (box with hole); copper etched back by the rim, like the top.
+    // Its hole-facing face is the upper one → widen rup.
     const double zBotCu = -(geom_.zDielHalf + geom_.tCuCm / 2.0);
     auto botCu = std::make_unique<SolidHole>(0., 0., zBotCu, rCu,
-                                             rCu, hx, hy, geom_.tCuCm / 2.0);
+                                             rCuEdge, hx, hy, geom_.tCuCm / 2.0);
     botCu->SetSectors(sec);
     botCu->SetBoundaryPotential(geom_.vBotCu);
     botCu->SetLabel("thgem_bottom");
@@ -904,6 +926,7 @@ class ThgemDetector {
     ThgemGeom o;
     o.rHoleCm   = g.holeDiameterUm  * 0.5e-4;   // µm diameter → cm radius
     o.rimCm     = g.rimUm           * 1.e-4;
+    o.edgeRoundCm = g.edgeRoundUm   * 1.e-4;
     o.pitchCm   = g.holePitchUm     * 1.e-4;
     o.tDielCm   = g.plateThicknessUm  * 1.e-4;
     o.tCuCm     = g.copperThicknessUm * 1.e-4;
@@ -1061,41 +1084,93 @@ void DumpWeightingMap(TDirectory* dir, const std::string& id,
 // ComponentGrid has no material map, so without it charges drift through metal.
 void SampleFieldToFile(ComponentNeBem3d& cmp, const ThgemDetector& det,
                        const ThgemGeom& g, const GeometryConfig& gc,
-                       const double gxy, const std::string& file) {
-  // Write atomically via a temp file + rename: an interrupted or crashing sample
-  // must never leave a truncated file that looks like a valid cache on the next run.
+                       const double gxy, const std::string& file,
+                       const bool inpaintConductors) {
+  const int NX = gc.gridNx, NZ = gc.gridNz;
+  const double dxy = 2. * gxy / std::max(NX - 1, 1);
+  const double dz  = (g.zDrift - g.zAnode) / std::max(NZ - 1, 1);
+  const std::size_t total = static_cast<std::size_t>(NX) * NX * NZ;
+  auto idx = [NX, NZ](int i, int j, int k) {
+    return (static_cast<std::size_t>(i) * NX + j) * NZ + k;
+  };
+  std::vector<double> Ex(total), Ey(total), Ez(total), Vv(total);
+  std::vector<char> gasFlag(total);   // 1 = gas (absorbing flag 1), 0 = inside a solid
+
+  // Sample the neBEM field (and the in-gas flag) onto every node.
+  std::size_t done = 0, nextPct = 20;
+  for (int i = 0; i < NX; ++i) {
+    const double x = -gxy + i * dxy;
+    for (int j = 0; j < NX; ++j) {
+      const double y = -gxy + j * dxy;
+      for (int k = 0; k < NZ; ++k) {
+        const double z = g.zAnode + k * dz;
+        double ex = 0, ey = 0, ez = 0, v = 0; int status = 0;
+        Garfield::Medium* m = nullptr;
+        cmp.ElectricField(x, y, z, ex, ey, ez, v, m, status);
+        const std::size_t n = idx(i, j, k);
+        Ex[n] = ex; Ey[n] = ey; Ez[n] = ez; Vv[n] = v;
+        gasFlag[n] = det.InGas(x, y, z) ? 1 : 0;
+        if (++done * 100 >= nextPct * total) {
+          std::cout << "    sampling " << nextPct << "%\n";
+          nextPct += 20;
+        }
+      }
+    }
+  }
+
+  // Inpaint: overwrite the field inside conductor nodes with an average of the
+  // neighbouring gas/already-filled nodes, propagating inward a few cells.  This keeps
+  // the gas-side trilinear interpolation near a conductor boundary clean (the in-metal
+  // field it would otherwise blend in points oddly and reverses the collecting field).
+  // The gasFlag written below is untouched, so absorption on the metal still works.
+  if (inpaintConductors) {
+    std::vector<char> known(gasFlag);   // gas nodes are "known"; fill the rest
+    for (int pass = 0, maxpass = NX + NZ; pass < maxpass; ++pass) {
+      bool changed = false;
+      for (int i = 0; i < NX; ++i)
+        for (int j = 0; j < NX; ++j)
+          for (int k = 0; k < NZ; ++k) {
+            const std::size_t n = idx(i, j, k);
+            if (known[n]) continue;
+            double sx = 0, sy = 0, sz = 0, sv = 0; int cnt = 0;
+            auto add = [&](int ii, int jj, int kk) {
+              if (ii < 0 || ii >= NX || jj < 0 || jj >= NX || kk < 0 || kk >= NZ) return;
+              const std::size_t mm = idx(ii, jj, kk);
+              if (known[mm]) { sx += Ex[mm]; sy += Ey[mm]; sz += Ez[mm]; sv += Vv[mm]; ++cnt; }
+            };
+            add(i - 1, j, k); add(i + 1, j, k); add(i, j - 1, k);
+            add(i, j + 1, k); add(i, j, k - 1); add(i, j, k + 1);
+            if (cnt > 0) {
+              Ex[n] = sx / cnt; Ey[n] = sy / cnt; Ez[n] = sz / cnt; Vv[n] = sv / cnt;
+              known[n] = 1; changed = true;
+            }
+          }
+      if (!changed) break;
+    }
+  }
+
+  // Write atomically (temp file + rename): a truncated cache must never look valid.
   const std::string tmp = file + ".part";
   {
     std::ofstream out(tmp);
     if (!out) throw std::runtime_error("Cannot write field cache: " + tmp);
     out << std::setprecision(8);
-    const int NX = gc.gridNx, NZ = gc.gridNz;
-    const double dxy = 2. * gxy / std::max(NX - 1, 1);
-    const double dz  = (g.zDrift - g.zAnode) / std::max(NZ - 1, 1);
-    const std::size_t total = static_cast<std::size_t>(NX) * NX * NZ;
-    std::size_t done = 0, nextPct = 20;
     for (int i = 0; i < NX; ++i) {
       const double x = -gxy + i * dxy;
       for (int j = 0; j < NX; ++j) {
         const double y = -gxy + j * dxy;
         for (int k = 0; k < NZ; ++k) {
           const double z = g.zAnode + k * dz;
-          double ex = 0, ey = 0, ez = 0, v = 0; int status = 0;
-          Garfield::Medium* m = nullptr;
-          cmp.ElectricField(x, y, z, ex, ey, ez, v, m, status);
-          const int flag = det.InGas(x, y, z) ? 1 : 0;
+          const std::size_t n = idx(i, j, k);
           out << x << ' ' << y << ' ' << z << ' '
-              << ex << ' ' << ey << ' ' << ez << ' ' << v << ' ' << flag << '\n';
-          if (++done * 100 >= nextPct * total) {
-            std::cout << "    sampling " << nextPct << "%\n";
-            nextPct += 20;
-          }
+              << Ex[n] << ' ' << Ey[n] << ' ' << Ez[n] << ' ' << Vv[n] << ' '
+              << static_cast<int>(gasFlag[n]) << '\n';
         }
       }
     }
     out.flush();
     if (!out) throw std::runtime_error("Write error while sampling field cache: " + tmp);
-  }  // close the stream before renaming
+  }
   fs::rename(tmp, file);
 }
 
@@ -1128,7 +1203,10 @@ std::string DeriveFieldCacheName(const GeometryConfig& g, const FieldConfig& f) 
      << "_g" << g.gridNx << "x" << g.gridNz
      << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
   if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);   // only when set → straight-hole caches stay valid
-  ss << "_v2.txt";
+  if (g.edgeRoundUm > 0.) ss << "_er" << I(g.edgeRoundUm);
+  // Default (no inpainting) keeps the historical "_v2" key so existing caches stay valid;
+  // the opt-in conductor-inpainted field gets a distinct suffix.
+  ss << (f.inpaintConductors ? "_v2ip.txt" : "_v2.txt");
   return ss.str();
 }
 
@@ -1148,6 +1226,7 @@ std::string DeriveWeightingCacheName(const GeometryConfig& g, const std::string&
      << "_e" << I(g.targetElementSizeUm) << "_n" << g.minElements << "-" << g.maxElements
      << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
   if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);
+  if (g.edgeRoundUm > 0.) ss << "_er" << I(g.edgeRoundUm);
   ss << "_v2.txt";
   return ss.str();
 }
@@ -1997,6 +2076,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"plate_thickness_um",     cfg.geometry.plateThicknessUm},
       {"copper_thickness_um",    cfg.geometry.copperThicknessUm},
       {"rim_um",                 cfg.geometry.rimUm},
+      {"edge_round_um",          cfg.geometry.edgeRoundUm},
       {"drift_gap_mm",           cfg.geometry.driftGapMm},
       {"induction_gap_mm",       cfg.geometry.inductionGapMm},
       {"dielectric_material",    cfg.geometry.dielectric},
@@ -2013,7 +2093,8 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"delta_v_thgem_V",  cfg.fields.deltaVThgemV},
       {"e_induction_kvcm", cfg.fields.eInductionKvcm},
       {"dump_raw_field",   cfg.fields.dumpRawField},
-      {"use_raw_nebem",    cfg.fields.useRawNebem}
+      {"use_raw_nebem",    cfg.fields.useRawNebem},
+      {"inpaint_conductors", cfg.fields.inpaintConductors}
     }},
     // Derived electrode potentials [V] and cell geometry [cm], echoed for the GUI.
     {"derived", {
@@ -2269,7 +2350,8 @@ int main(int argc, char* argv[]) {
                 << " boundary elements).\n";
       if (!haveField) {
         std::cout << "  Sampling transport grid (be patient)...\n";
-        SampleFieldToFile(detector.Component(), detector, g, cfg.geometry, gxy, fieldCache);
+        SampleFieldToFile(detector.Component(), detector, g, cfg.geometry, gxy, fieldCache,
+                          cfg.fields.inpaintConductors);
         if (!grid.LoadElectricField(fieldCache, "xyz",
                                     /*withPotential=*/true, /*withFlag=*/true))
           throw std::runtime_error("Failed to load freshly sampled transport field: "
