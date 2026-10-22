@@ -227,6 +227,11 @@ struct SimulationConfig {
   // fast; raise it (or set 0) for ion-backflow studies.
   std::size_t maxIonsDrifted   = 200;
   int         randomSeed       = 0;
+  // Diagnostic: dump every classified electron's birth position/energy, endpoint and
+  // fate category to collection_endpoints.csv, for recapture-geometry studies in the
+  // collect-only / drift-only modes (see docs/extraction_ratio_investigation.md).  Off
+  // by default — it does not affect transport, caches or any other output.
+  bool        dumpCollection   = false;
 };
 
 // Front-end amplifier (CIVIDEC C2-TCT broadband transimpedance current amp): turns a
@@ -594,6 +599,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.storeDriftLines  = ReadBool  (*s, "simulation", "store_drift_lines",  cfg.simulation.storeDriftLines);
     cfg.simulation.driftOnly        = ReadBool  (*s, "simulation", "drift_only",         cfg.simulation.driftOnly);
     cfg.simulation.collectOnly      = ReadBool  (*s, "simulation", "collect_only",       cfg.simulation.collectOnly);
+    cfg.simulation.dumpCollection   = ReadBool  (*s, "simulation", "dump_collection",    cfg.simulation.dumpCollection);
     cfg.simulation.ionMaxStepUm     = ReadDouble(*s, "simulation", "ion_max_step_um",    cfg.simulation.ionMaxStepUm);
     cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
     cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
@@ -1532,6 +1538,28 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     return "dielectric";                         // stopped on the hole wall (dielectric)
   };
 
+  // Optional per-electron collection dump: the birth position/energy, endpoint and fate
+  // of every classified electron, appended across distance points to one CSV beside the
+  // ROOT file.  Lets a recapture-geometry study see *where* on the copper electrons land
+  // and *where* they were born (docs/extraction_ratio_investigation.md).
+  std::ofstream collDump;
+  if (sim.dumpCollection && distDir && distDir->GetFile()) {
+    const fs::path csv = fs::path(distDir->GetFile()->GetName()).parent_path()
+                         / "collection_endpoints.csv";
+    const bool fresh = !fs::exists(csv) || fs::file_size(csv) == 0;
+    collDump.open(csv.string(), std::ios::app);
+    if (fresh && collDump)
+      collDump << "dist_label,event,birth_x_cm,birth_y_cm,birth_z_cm,birth_E_eV,"
+                  "end_x_cm,end_y_cm,end_z_cm,category\n";
+  }
+  auto dumpColl = [&](std::size_t ev, double bx, double by, double bz, double bE,
+                      double ex, double ey, double ez, const std::string& cat) {
+    if (!collDump) return;
+    collDump << distLabel << ',' << ev << ','
+             << bx << ',' << by << ',' << bz << ',' << bE << ','
+             << ex << ',' << ey << ',' << ez << ',' << cat << '\n';
+  };
+
   // ── Event loop ───────────────────────────────────────────────────────────────
   auto tEvent = std::chrono::steady_clock::now();
   for (std::size_t ev = 0; ev < sim.nEvents; ++ev) {
@@ -1576,8 +1604,10 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       if (aval.GetNumberOfElectronEndpoints() > 0) {
         double a0, b0, c0, d0, e0, x1, y1, z1, t1, ee1; int st;
         aval.GetElectronEndpoint(0, a0, b0, c0, d0, e0, x1, y1, z1, t1, ee1, st);
-        ++collectTally[categorizeCollection(st, x1, y1, z1)];
+        const std::string cat = categorizeCollection(st, x1, y1, z1);
+        ++collectTally[cat];
         ++primaryFate[DriftStatusToString(st) + " @ " + classifyEndZone(x1, y1, z1)];
+        dumpColl(ev, a0, b0, c0, e0, x1, y1, z1, cat);
       }
       if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents)
         std::cout << "  height=" << distLabel << ": " << (ev + 1) << "/" << sim.nEvents
@@ -1620,6 +1650,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
         else if (cat == "dielectric") ++nColDielectric;
         else if (cat == "attached")   ++nColAttached;
         else if (cat == "drift")      ++nColUnres;   // still drifting at the time window
+        dumpColl(ev, ex0, ey0, ez0, ee0, ex1, ey1, ez1, cat);
       }
       const double tot = static_cast<double>(nEp);
       collAnodeFrac.push_back(nColAnode / tot);
@@ -2140,7 +2171,8 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"ion_max_step_um",    cfg.simulation.ionMaxStepUm},
       {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
       {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
-      {"random_seed",        cfg.simulation.randomSeed}
+      {"random_seed",        cfg.simulation.randomSeed},
+      {"dump_collection",    cfg.simulation.dumpCollection}
     }},
     {"amplifier", {
       {"enable",              cfg.amplifier.enable},
