@@ -78,6 +78,7 @@
 #include "Garfield/Solid.hh"
 #include "Garfield/SolidBox.hh"
 #include "Garfield/SolidHole.hh"
+#include "Garfield/SolidTube.hh"
 #include "nlohmann/json.hpp"
 
 namespace fs = std::filesystem;
@@ -96,7 +97,36 @@ using Garfield::Sensor;
 using Garfield::Solid;
 using Garfield::SolidBox;
 using Garfield::SolidHole;
+using Garfield::SolidTube;
 using json = nlohmann::json;
+
+
+// A dielectric SolidHole that also carries a fixed surface charge density, exposing neBEM's
+// DielectricCharge interface (type 5, "dielectric with given surface charge").  Solid has no
+// public setter for it — SetBoundaryChargeDensity instead makes the surface a *conductor*
+// with known charge (Solid::Charge), which would screen the field.  Used to model trapped
+// charge on the THGEM dielectric hole wall / rim (charging-up) while keeping the dielectric
+// permittivity continuity.  m_charge/m_bctype are protected members of Garfield::Solid.
+class ChargedDielectricHole : public SolidHole {
+ public:
+  using SolidHole::SolidHole;   // inherit constructors
+  void SetBoundaryDielectricCharge(const double q) {
+    m_charge = q;
+    m_bctype = Solid::DielectricCharge;
+  }
+};
+
+// Same, for a tube: the charged exposed-rim annulus (r ∈ [rHole, rCu]).  neBEM rejects a
+// charged dielectric that touches a conductor, so the rim charge must sit on this annulus,
+// which the copper etch-back leaves facing only gas and the uncharged dielectric.
+class ChargedDielectricTube : public SolidTube {
+ public:
+  using SolidTube::SolidTube;
+  void SetBoundaryDielectricCharge(const double q) {
+    m_charge = q;
+    m_bctype = Solid::DielectricCharge;
+  }
+};
 
 
 // ─── Configuration structs ────────────────────────────────────────────────────
@@ -112,6 +142,11 @@ struct GeometryConfig {
   // (→ spurious over-extraction); a small, physically-realistic rounding (real drilled
   // edges are not atomically sharp) regularises it so a feasible grid resolves it.
   double edgeRoundUm       = 0.0;
+  // Charging-up study: height [µm] of the bottom exposed-rim dielectric annulus that carries
+  // the trapped surface charge (fields.dielectric_surface_charge).  Needs a rim (rim_um > 0)
+  // so the annulus r∈[rHole, rCu] exists and faces gas, not copper.  0 → no charged ring
+  // (the dielectric stays a single solid; exact baseline).
+  double rimChargeHeightUm = 0.0;
   double driftGapMm        = 3.0;     // top-Cu surface → drift cathode [mm]
   double inductionGapMm    = 2.0;     // bottom-Cu surface → anode pad [mm]
   std::string dielectric   = "fr4";   // "fr4" | "kapton"
@@ -149,6 +184,11 @@ struct FieldConfig {
   // over-extraction (the edge field rotates sub-cell, below any uniform-grid resolution — see
   // docs/extraction_ratio_investigation.md).  use_raw_nebem is the correct transport there.
   bool   inpaintConductors = false;
+  // Charging-up study: fixed surface charge density placed on the dielectric hole wall
+  // (neBEM DielectricCharge interface), modelling trapped avalanche charge on the rim.
+  // 0 → uncharged dielectric (default, exact baseline).  Units: Garfield native surface
+  // charge density (calibrate the physical scale via a field dump; negative = electrons).
+  double dielSurfaceCharge = 0.0;
 };
 
 struct SourceConfig {
@@ -527,6 +567,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.geometry.copperThicknessUm = ReadDouble(*g, "geometry", "copper_thickness_um", cfg.geometry.copperThicknessUm);
     cfg.geometry.rimUm             = ReadDouble(*g, "geometry", "rim_um",              cfg.geometry.rimUm);
     cfg.geometry.edgeRoundUm       = ReadDouble(*g, "geometry", "edge_round_um",       cfg.geometry.edgeRoundUm);
+    cfg.geometry.rimChargeHeightUm = ReadDouble(*g, "geometry", "rim_charge_height_um", cfg.geometry.rimChargeHeightUm);
     cfg.geometry.driftGapMm        = ReadDouble(*g, "geometry", "drift_gap_mm",        cfg.geometry.driftGapMm);
     cfg.geometry.inductionGapMm    = ReadDouble(*g, "geometry", "induction_gap_mm",    cfg.geometry.inductionGapMm);
     cfg.geometry.dielectric        = ReadString(*g, "geometry", "dielectric_material", cfg.geometry.dielectric);
@@ -546,6 +587,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.fields.dumpRawField   = ReadBool  (*f, "fields", "dump_raw_field",   cfg.fields.dumpRawField);
     cfg.fields.useRawNebem    = ReadBool  (*f, "fields", "use_raw_nebem",    cfg.fields.useRawNebem);
     cfg.fields.inpaintConductors = ReadBool(*f, "fields", "inpaint_conductors", cfg.fields.inpaintConductors);
+    cfg.fields.dielSurfaceCharge = ReadDouble(*f, "fields", "dielectric_surface_charge", cfg.fields.dielSurfaceCharge);
   }
 
   if (const auto* s = FindSection(root, "source")) {
@@ -811,6 +853,7 @@ struct ThgemGeom {
   double rHoleCm    = 0.;   // dielectric hole radius
   double rimCm      = 0.;   // copper etched back this far → copper hole = rHole + rim
   double edgeRoundCm = 0.;  // chamfer on the copper hole-facing inner edge
+  double rimChargeHeightCm = 0.;  // height of the charged bottom exposed-rim annulus
   double pitchCm    = 0.;   // full cell size (square)
   double tDielCm    = 0.;
   double tCuCm      = 0.;
@@ -865,12 +908,52 @@ class ThgemDetector {
     solids_.push_back(std::move(topCu));
 
     // Dielectric foil (box with hole), centred at z = 0.
-    auto diel = std::make_unique<SolidHole>(0., 0., 0., geom_.rHoleCm,
-                                            geom_.rHoleCm, hx, hy, geom_.zDielHalf);
-    diel->SetSectors(sec);
-    diel->SetBoundaryDielectric();
-    geo_.AddSolid(diel.get(), &diel_);
-    solids_.push_back(std::move(diel));
+    //
+    // For the charging-up study the exposed rim — the dielectric annulus r∈[rHole, rCu] that
+    // the copper etch-back leaves facing the gas — is split off so its bottom part can carry
+    // trapped surface charge.  neBEM rejects a charged dielectric adjacent to a conductor, so
+    // the charge cannot sit on the full foil (clamped by the copper); the annulus touches only
+    // gas and uncharged dielectric, so it can.  Decomposition when charging:
+    //   • outer dielectric  SolidHole(hole = rCu)            — r ≥ rCu (touches copper)
+    //   • bottom rim ring    ChargedDielectricTube(rHole,rCu) — charged, height rimChargeHeight
+    //   • upper rim ring     SolidTube(rHole, rCu)            — the rest of the annulus, plain
+    // Otherwise (σ = 0, no rim, or rimChargeHeight = 0) the dielectric is one SolidHole,
+    // bit-identical to the uncharged baseline.
+    const bool chargeRim = f.dielSurfaceCharge != 0. && geom_.rimCm > 0. &&
+                           geom_.rimChargeHeightCm > 0.;
+    if (!chargeRim) {
+      auto diel = std::make_unique<SolidHole>(0., 0., 0., geom_.rHoleCm,
+                                              geom_.rHoleCm, hx, hy, geom_.zDielHalf);
+      diel->SetSectors(sec);
+      diel->SetBoundaryDielectric();
+      geo_.AddSolid(diel.get(), &diel_);
+      solids_.push_back(std::move(diel));
+    } else {
+      auto outer = std::make_unique<SolidHole>(0., 0., 0., rCu, rCu, hx, hy,
+                                               geom_.zDielHalf);
+      outer->SetSectors(sec);
+      outer->SetBoundaryDielectric();
+      geo_.AddSolid(outer.get(), &diel_);
+      solids_.push_back(std::move(outer));
+
+      const double h = std::min(geom_.rimChargeHeightCm, 2.0 * geom_.zDielHalf);
+      auto botRing = std::make_unique<ChargedDielectricTube>(
+          0., 0., -geom_.zDielHalf + h / 2.0, geom_.rHoleCm, rCu, h / 2.0);
+      botRing->SetSectors(sec);
+      botRing->SetBoundaryDielectricCharge(f.dielSurfaceCharge);
+      geo_.AddSolid(botRing.get(), &diel_);
+      solids_.push_back(std::move(botRing));
+
+      if (h < 2.0 * geom_.zDielHalf) {
+        const double hUp = 2.0 * geom_.zDielHalf - h;
+        auto upRing = std::make_unique<SolidTube>(
+            0., 0., -geom_.zDielHalf + h + hUp / 2.0, geom_.rHoleCm, rCu, hUp / 2.0);
+        upRing->SetSectors(sec);
+        upRing->SetBoundaryDielectric();
+        geo_.AddSolid(upRing.get(), &diel_);
+        solids_.push_back(std::move(upRing));
+      }
+    }
 
     // Bottom copper cladding (box with hole); copper etched back by the rim, like the top.
     // Its hole-facing face is the upper one → widen rup.
@@ -933,6 +1016,7 @@ class ThgemDetector {
     o.rHoleCm   = g.holeDiameterUm  * 0.5e-4;   // µm diameter → cm radius
     o.rimCm     = g.rimUm           * 1.e-4;
     o.edgeRoundCm = g.edgeRoundUm   * 1.e-4;
+    o.rimChargeHeightCm = g.rimChargeHeightUm * 1.e-4;
     o.pitchCm   = g.holePitchUm     * 1.e-4;
     o.tDielCm   = g.plateThicknessUm  * 1.e-4;
     o.tCuCm     = g.copperThicknessUm * 1.e-4;
@@ -1210,6 +1294,9 @@ std::string DeriveFieldCacheName(const GeometryConfig& g, const FieldConfig& f) 
      << "_s" << g.holeSectors << "_pc" << g.periodicCopies;
   if (g.rimUm > 0.) ss << "_rim" << I(g.rimUm);   // only when set → straight-hole caches stay valid
   if (g.edgeRoundUm > 0.) ss << "_er" << I(g.edgeRoundUm);
+  // A charged dielectric changes the transport field → distinct cache; absent when uncharged
+  // so existing caches stay valid.
+  if (f.dielSurfaceCharge != 0.) ss << "_qs" << FileSafeNumber(f.dielSurfaceCharge);
   // Default (no inpainting) keeps the historical "_v2" key so existing caches stay valid;
   // the opt-in conductor-inpainted field gets a distinct suffix.
   ss << (f.inpaintConductors ? "_v2ip.txt" : "_v2.txt");
@@ -2125,7 +2212,8 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"e_induction_kvcm", cfg.fields.eInductionKvcm},
       {"dump_raw_field",   cfg.fields.dumpRawField},
       {"use_raw_nebem",    cfg.fields.useRawNebem},
-      {"inpaint_conductors", cfg.fields.inpaintConductors}
+      {"inpaint_conductors", cfg.fields.inpaintConductors},
+      {"dielectric_surface_charge", cfg.fields.dielSurfaceCharge}
     }},
     // Derived electrode potentials [V] and cell geometry [cm], echoed for the GUI.
     {"derived", {
@@ -2449,9 +2537,13 @@ int main(int argc, char* argv[]) {
       out << std::setprecision(6)
           << "x_cm,z_cm,in_gas,ex_raw,ez_raw,emag_raw,ex_grid,ez_grid,emag_grid\n";
       auto& nebem = detector.Component();
-      const double x0 = 0.0, x1 = 0.035;        // 0 … 350 µm (axis → past the copper edge)
-      const double z0 = -0.032, z1 = -0.015;    // −320 … −150 µm (exit + bottom-Cu band)
-      const double step = 5.e-4;                // 5 µm
+      // Cover the hole exit + full induction gap down to the anode, so electron drift lines
+      // can be traced to termination (field-line extraction screen).  x spans axis → past the
+      // rim; z spans just above the anode → into the lower hole.
+      const auto& gm = detector.Geom();
+      const double step = 5.e-4;                                  // 5 µm
+      const double x0 = 0.0, x1 = std::min(0.045, gm.pitchCm / 2. - step);
+      const double z0 = gm.zAnode + step, z1 = -0.010;           // anode⁺ … −100 µm
       for (double z = z0; z <= z1 + 1e-9; z += step) {
         for (double x = x0; x <= x1 + 1e-9; x += step) {
           double exR=0,eyR=0,ezR=0,vR=0; Garfield::Medium* mR=nullptr; int sR=0;

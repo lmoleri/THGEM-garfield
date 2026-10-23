@@ -4,8 +4,10 @@
 *field-sampling artifact* of the uniform transport grid at the thin copper edge, not physics.
 On the exact (neBEM) transport field the simulation finally collects charge on the bottom
 copper and the extraction magnitude drops into the measured band. One feature of the
-measurement — the **rise of the ratio at small induction gaps** — still has no counterpart in
-the idealized electrostatic + microscopic model and remains open.
+measurement — the **suppression of the ratio at small induction gaps** — has no counterpart in
+the idealized electrostatic + microscopic model; the **leading candidate is bottom-rim
+dielectric charging-up** (§10–11), which a field-line screen shows moves extraction the right
+way for the measured sign, magnitude and E_ind-independence, with the gap-dependence still open.
 
 This note records the full investigation into reproducing, in the Garfield++ THGEM simulation,
 a lab measurement of the **Anode/THGEM-top charge ratio as a function of the induction gap**.
@@ -249,7 +251,99 @@ E_ind there — must come from something outside a single-avalanche electrostati
 transport model (candidates not yet tested: dielectric charging-up at the hole wall, or a readout/
 charge-definition effect in the denominator at small gaps). That is the open question.
 
-## 9. Mechanisms tested and excluded
+## 9. Where the recaptured electrons go — a sharp-corner effect
+
+A higher-statistics exact-field sweep (`use_raw_nebem`, 40 events/gap vs the ~6 of §8) sharpens the
+numbers and adds a per-electron **recapture dump** (`simulation.dump_collection`, writing each
+electron's birth, endpoint and fate to `collection_endpoints.csv`):
+
+| induction gap [mm] | 0.1 | 0.2 |
+|---|---|---|
+| measurement | 0.51 | 0.64 |
+| sim anode/total | 0.757 ± 0.048 | 0.653 ± 0.044 |
+| sim bottom-copper | 0.052 ± 0.013 | 0.133 ± 0.029 |
+| sim attached | 0.11 | 0.13 |
+
+With real error bars the simulated extraction **decreases** with gap (0.757 → 0.653) while the
+measurement **rises** (0.51 → 0.64): the two cross near 0.2 mm, and at the smallest gap the idealized
+sim *over*-extracts (0.76 vs 0.51). (Each larger gap is a multi-hour raw-neBEM run, so the
+high-statistics sweep was not pushed past 0.2 mm.)
+
+The dump shows **where** the bottom-copper electrons are lost: every one ends at the **sharp inner
+corner of the bottom copper** (r ≈ 243 µm, z ≈ −220 µm — a few-µm-tight cluster), although they are
+*born throughout the hole*, in the same region as the extracted electrons. Recapture is a near-exit,
+near-singular-edge effect, not a birth-position effect — which turns attention to the exposed
+dielectric **rim** at the hole exit.
+
+![Recapture map](figures/recapture_map.png)
+
+## 10. Hypothesis: bottom-rim dielectric charging-up
+
+The measured small-gap suppression is **E_ind-independent** (the 1.5/2.0/2.5 kV/cm curves coincide at
+≤ 0.2 mm) and absent from the idealized model. A field perturbation **set by charge and geometry, not
+by the applied voltage** is the natural candidate — i.e. **charging-up** of the exposed dielectric.
+
+**Literature.** Charging-up is a documented, dominant driver of THGEM gain evolution, and it is
+**rim-specific**: Pitt et al. (JINST 13 (2018) P03009) separate a short timescale (hole walls + bottom
+rim) from a long one (top rim). Correia & Azevedo (JINST 9 (2014) P07025; 13 (2018) P01015)
+established the iterative / superposition method (E_tot = E_uncharged + E_charges over pre-computed
+slice fields), whose characteristic charge Q_tot is "set by electrode geometry, not by voltage." The
+neBEM authors' own group models it self-consistently in Garfield++-neBEM (Bhattacharya, Dutta,
+Mukhopadhyay et al.; arXiv:2112.12471 / 2606.24154; JINST 20 (2025) C04019; MPGD2026).
+
+**The sign — from the self-consistent simulation.** The naive view (electrons drift down → bottom rim
+negative) is wrong. In the SINP self-consistent runs the **bottom rim is net *positive*** ("accumulates
+both, but is more positive throughout"): it faces the induction gap, and the **returning induction-gap
+ions** land on it within tens of ns ("ions made at the hole exit are already beside it"), collecting
++2–5 pC, while the fast electrons are swept out in ~100 ns. The bottom rim is the surface that does the
+gain-stabilising, and by intercepting those returning ions it even keeps the lower hole wall negative.
+So the surface facing the electrons at the hole mouth carries a **positive** trapped charge.
+
+**neBEM note.** neBEM *implements* a charged-dielectric interface (`DielectricCharge`, type 5; exposed
+here via a `ChargedDielectricHole`/`ChargedDielectricTube` + `fields.dielectric_surface_charge`), but
+it **rejects a charged dielectric that touches a conductor** — and the foil is clamped between the two
+copper layers, while decomposing it to isolate the exposed-rim annulus produces coincident panels that
+neBEM's overlap handling also rejects. So the charge field is added by **superposition** (the Correia
+method, done analytically), not solved as a boundary condition.
+
+## 11. Field-line extraction screen
+
+A full charged-field avalanche sweep is many days of raw-neBEM, so the hypothesis is screened cheaply:
+superpose the charge field on the uncharged exact field and **trace electron drift lines** from the
+hole exit to termination (`scripts/screen_rim_charge.py`), E_tot = E_uncharged(neBEM) + σ ×
+E_annulus(Coulomb) for a charged exposed-rim surface. This is a geometric screen — no diffusion, so
+its *absolute* extraction sits above the avalanche value, but the *σ-effect and its sign* are reliable.
+
+**The sign (ig = 0.5 mm):**
+
+![Rim-charge extraction screen](figures/rim_charge_screen.png)
+
+| σ [nC/cm²] | −8 | −1.6 | 0 | +1.6 | +4 |
+|---|---|---|---|---|---|
+| extraction (anode/total) | 1.00 | 0.88 | 0.78 | 0.66 | 0.26 |
+
+A **positive** rim charge **suppresses** extraction (it pulls exiting electrons outward onto the bottom
+copper); a negative one enhances it. Combined with §10 — the bottom rim is **positive** — this is the
+**right direction**: bottom-rim charging lowers Anode/THGEM-top, as measured. Magnitude is consistent:
+the SINP +5 pC over the 100 µm rim annulus is σ ≈ +2.7 nC/cm², which in the screen lands extraction
+near **0.5** ≈ the measured 0.51; and a geometry-set charge gives the observed **E_ind-independence**.
+
+**The gap-dependence is still open.** At a *fixed* σ the screened extraction falls monotonically with
+gap (σ = +2.7 nC/cm²: 0.84 / 0.68 / 0.48 / 0.38 at 0.1 / 0.2 / 0.5 / 1.0 mm) — the per-charge
+suppression is *weakest* at the smallest gap, the opposite of the measured rise-to-a-peak. Matching the
+measurement requires the **equilibrium rim charge to grow strongly at small gaps** (plausible — at a
+small induction gap the exit ions are collected onto the rim more efficiently — but not shown by the
+screen). Settling it needs the **self-consistent charging calculation** (σ set by the physics per gap),
+not an imposed σ. Caveats: the superposition is a bare-charge field (ignores the dielectric's
+polarization and copper image charges — these rescale the magnitude by a factor of order (1+ε)/2 and
+screening, not the sign), and the SINP dynamics run at ~10⁵× the measurement's ~10 Hz rate (the
+charge *pattern* carries over, the absolute magnitude does not).
+
+**Status:** sign and mechanism reconciled — a positive bottom rim suppresses extraction, matching the
+direction, rough magnitude and E_ind-independence of the measurement; the gap-dependence hinges on
+σ(induction gap), the next step.
+
+## 12. Mechanisms tested and excluded
 
 | # | Mechanism | How tested | Verdict |
 |---|---|---|---|
@@ -259,9 +353,10 @@ charge-definition effect in the denominator at small gaps). That is the open que
 | 4 | Electron attachment (§6) | vary CO₂ (microscopic Magboltz) | Ruled out: minor, gap-flat; routes to anode, not bottom copper |
 | 5 | **Grid field-sampling artifact at the copper edge (§7)** | raw-neBEM vs grid, field dump, wall-release | **Root cause** of the over-extraction — fixed by `use_raw_nebem` |
 | 6 | Copper-edge rounding / conductor in-painting (§7) | `edge_round_um`, `inpaint_conductors` | Do not fix the grid (sub-cell field rotation); kept opt-in, off by default |
-| — | Measured rise at small induction gaps (§8) | exact-field sweep + voltage convention | **Open** — absent from the idealized electrostatic + microscopic model |
+| 7 | **Bottom-rim dielectric charging-up (§10–11)** | field-line screen + self-consistent-sim sign (literature) | **Leading candidate** — a *positive* bottom rim (returning ions) suppresses extraction: right direction, rough magnitude and E_ind-independence. Gap-dependence open (needs σ per gap) |
+| — | Measured rise at small induction gaps (§8) | exact-field sweep + voltage convention | **Open** — charging (§11) is the leading candidate; its gap-dependence is unresolved |
 
-## 10. Reproducing
+## 13. Reproducing
 
 Simulation outputs live under `results/` (gitignored):
 
@@ -271,6 +366,9 @@ Simulation outputs live under `results/` (gitignored):
 - `results/extraction_edge_field/` — the exact-field (`use_raw_nebem`) gap sweep
   (`raw_nebem_sweep.csv`) and a `dump_raw_field` slice through the copper edge
   (`raw_vs_grid_field_ig0p5.csv`).
+- `results/extraction_charging/` — the high-statistics exact-field collection sweep with
+  `dump_collection` (`collection_endpoints.csv` per gap, for the recapture map) and the
+  `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen.
 
 Figures in this note regenerate from those outputs via:
 
@@ -280,6 +378,9 @@ python3 scripts/plot_spacecharge_estimate.py    # -> docs/figures/spacecharge_se
 python3 scripts/plot_rawgrid_edge_field.py      # -> docs/figures/rawgrid_edge_field.png
 python3 scripts/plot_wall_release.py            # -> docs/figures/wall_release_grid_vs_exact.png
 python3 scripts/plot_rawfield_sweep.py          # -> docs/figures/rawfield_sweep_vs_meas.png
+python3 scripts/plot_recapture_map.py  <run_dir>  # -> <run_dir>/recapture_map.png (§9)
+python3 scripts/screen_rim_charge.py   <dump_dir> <σ…>   # field-line screen table (§11)
+python3 scripts/plot_rim_charge_screen.py <dump_dir>     # -> docs/figures/rim_charge_screen.png (§11)
 ```
 
 Diagnostics used by this investigation (in `src/thgem_sim.cc`):
@@ -288,9 +389,15 @@ Diagnostics used by this investigation (in `src/thgem_sim.cc`):
 - `fields.use_raw_nebem` — transport on the exact `ComponentNeBem3d`, bypassing the uniform grid; the
   correct field at the thin copper edge. **Slow** — use a small `simulation.max_avalanche_size` (the
   collection fraction is cap-independent) and a few events (commit `81f773c`).
-- `fields.dump_raw_field` — dump the exact vs grid field on a fine x-z slice through the copper edge
-  to `raw_vs_grid_field.csv` (commit `81f773c`).
+- `fields.dump_raw_field` — dump the exact vs grid field to `raw_vs_grid_field.csv`. The slice now
+  spans the hole exit → full induction gap (anode⁺ … −100 µm, axis → past the rim) so the charge
+  screen can trace drift lines to the anode (commit `81f773c`, region extended for §11).
 - `source.release_z_cm` — release a drift-only electron at an absolute z (e.g. on the hole wall) for
   the wall-release test (commit `81f773c`).
+- `simulation.dump_collection` — per-electron birth/endpoint/fate dump for the recapture map (§9).
 - `geometry.edge_round_um`, `fields.inpaint_conductors` — opt-in copper-edge chamfer and conductor
   in-painting; off by default (neither fixes the grid artifact).
+- `fields.dielectric_surface_charge`, `geometry.rim_charge_height_um` — opt-in trapped charge on the
+  exposed-rim dielectric annulus (neBEM `DielectricCharge` interface). Off by default; works only
+  where the charged dielectric does not touch a conductor, which the clamped THGEM foil does — so the
+  §11 screen uses analytical superposition instead (`scripts/screen_rim_charge.py`).
