@@ -343,7 +343,72 @@ charge *pattern* carries over, the absolute magnitude does not).
 direction, rough magnitude and E_ind-independence of the measurement; the gap-dependence hinges on
 σ(induction gap), the next step.
 
-## 12. Mechanisms tested and excluded
+## 12. Uncapped avalanches on the exact field: mean-avalanche transport (σ = 0)
+
+**Why a new method.** At ΔV = 1.9 kV the gain is ~10⁵ (uncapped grid avalanches: 2.6–4.4 × 10⁴⁺
+electrons per event). One cap-50 *microscopic* avalanche on the exact field takes **41 min** on one core,
+so an uncapped one is ~14 h — and capping is not harmless: the tracked electrons are the *early* ones,
+born mid-hole (mean z ≈ +25 µm), while the ions that charge the bottom rim are born at the exit
+(z ≈ −200 µm). §8–9's extraction numbers were capped (cap 10–50) and should be read with that bias.
+
+**Method** (`simulation.mc_electron_transport` + `mc_weighted_paths`). The mean of a branching
+drift-diffusion avalanche (independent electrons, local Townsend α and attachment η, absorbing walls) is
+given *exactly* by single non-branching paths weighted by G = ∫(α − η)·v_d dt (Feynman–Kac). Each event
+is one `AvalancheMC` path (`mc_step_um` = 4): its end carries e^G electrons, the ion births along it
+α·v_d·dt·e^G (sampled at `mc_ion_samples` points, dump species `b`), attachment η·v_d·dt·e^G. The ions are
+traced along +E on the exact-field slice (they diffuse ~100× less than electrons). Cost: ~5 s per path,
+i.e. one drift line instead of 10⁴–10⁵. Fractions are pooled ratios Σw_cat/Σw_total with bootstrap
+intervals (`scripts/meanaval_rim.py`).
+
+**Bugs found on the way** (all fixed; the default microscopic path is byte-identical):
+
+| | Bug | Effect | Fix |
+|---|---|---|---|
+| 1 | Gas tables declare no α/η threshold (`Thresholds: 1 1 1`), so Garfield's quadratic interpolation crosses the α = 0 step | α ~10³× too high at 12–23 kV/cm, η ~10²× near 3 kV/cm — every `AvalancheMC` electron (microscopic tracking uses cross sections, unaffected) | linear log–log interpolation for α, η (`SetupGas`) |
+| 2 | neBEM tiles the *field* over the lattice but the *solids* exist only in the central cell | a charge funnelled into a neighbouring hole met no walls; inside the plate it drifted through "gas" in a neighbour's FR4/copper (runaway gain, endpoints stuck at the cell edge — also in the earlier raw-field microscopic runs) | `PeriodicNeBem3d` folds (x, y) into the cell for the medium lookup; classifiers use the folded radius |
+| 3 | Surface classifier | time-window electrons counted as deposited; copper tested against the circle, not the 12-gon inradius (copper-flat hits tallied as rim); hits a hair below the copper face tallied as anode | unresolved category; inradius rCu·cos(π/12); 1 µm tolerance |
+| 4 | Raw-neBEM field at a point ~10⁻⁸ cm from a panel (a path's terminal point) is singular | α extrapolated far beyond the table, one path's G ≈ 360 | terminal point reuses the previous rates; \|E\| for α/η clamped at the table maximum |
+
+**Result at σ = 0** (2 × 500 paths per gap):
+
+| induction gap [mm] | 0.1 | 0.2 | 0.5 | 1.0 |
+|---|---|---|---|---|
+| measurement | 0.51 | 0.64 | 0.855 | 0.80 |
+| sim extraction (anode/total) | 0.979 [0.976, 0.982] | 0.886 [0.859, 0.912] | 0.62 [0.55, 0.72] | 0.37 [0.32, 0.45] |
+| electrons → bottom copper | 0.002 | 0.05 | 0.29 | 0.51 |
+| ions → bottom rim (per aval. e⁻) | 0.023 | 0.065 | 0.23 | 0.22 |
+| electrons → bottom rim | 0.004 | 0.008 | 0.010 | 0.041 |
+| **net rim charge** (ions − e⁻) | **+0.019** [0.011, 0.026] | **+0.056** [0.030, 0.082] | **+0.22** [0.12, 0.30] | **+0.18** [0.08, 0.26] |
+
+1. **The rim charges positive at every gap**, ion-dominated, the sign of the SINP self-consistent
+   simulations (§10) and the sign that suppresses extraction (§11).
+2. **The uncharged extraction falls with gap**, the opposite of the measurement, through electrons
+   ending on the bottom copper's lower face. That loss is concentrated in **corner-wrapping paths**: at
+   1.0 mm, 11.5 % of the paths end on the bottom copper, but with a median G of 13.8 against 11.8 for
+   anode paths (~8× more gain each), they carry 54 % of all avalanche electrons. Counting paths alone,
+   the extraction would be ≈ 0.99 / 0.99 / 0.95 / 0.88.
+3. **The same corner avalanches make the ions that charge the rim** (one path in 300 carried half the
+   ion-rim weight in a validation set): the near-singular field at the sharp bottom-copper inner corner
+   multiplies electrons right beside the recessed rim.
+
+**Caveats.** The weights are heavy-tailed (effective sample size 31–126 of 1000 paths; the two seeds at
+0.5/1.0 mm differ beyond their errors), so magnitudes at large gaps are uncertain. More importantly, the
+corner gain is computed in the **local-field approximation**, which is suspect where the field changes
+over ~µm (comparable to the electrons' energy-relaxation length), and the copper corner is modelled
+perfectly sharp. Whether microscopic transport gives the same corner gain is under test (primaries
+released at the hole exit, microscopic vs weighted MC). So far, from z = −150 µm, microscopic tracking
+gives *no less* total gain (17.8 ± 3.2 vs 14.9 ± 2.6 electrons per primary) and a bottom-copper share of
+18 ± 9 % vs 43 %: not conclusive.
+
+**Next: the self-consistent equilibrium.** neBEM carries the SINP charging-up machinery
+(`ComponentNeBem3d::SetChargingUpOptions(1)` with `neBEMInp/neBEMChargingUp.inp`). Electron and ion
+endpoints are mapped onto the dielectric elements and enter the solve as free charge (`RHVector`, case 4),
+including copper and anode images and FR4 polarisation. It avoids the charged-dielectric/conductor
+rejection of §10 and captures the gap-dependent anode image the §11 free-space screen cannot. Iterating
+deposit → re-solve → re-transport until the net rim deposition vanishes gives the infinite-leakage
+equilibrium per gap.
+
+## 13. Mechanisms tested and excluded
 
 | # | Mechanism | How tested | Verdict |
 |---|---|---|---|
@@ -353,10 +418,10 @@ direction, rough magnitude and E_ind-independence of the measurement; the gap-de
 | 4 | Electron attachment (§6) | vary CO₂ (microscopic Magboltz) | Ruled out: minor, gap-flat; routes to anode, not bottom copper |
 | 5 | **Grid field-sampling artifact at the copper edge (§7)** | raw-neBEM vs grid, field dump, wall-release | **Root cause** of the over-extraction — fixed by `use_raw_nebem` |
 | 6 | Copper-edge rounding / conductor in-painting (§7) | `edge_round_um`, `inpaint_conductors` | Do not fix the grid (sub-cell field rotation); kept opt-in, off by default |
-| 7 | **Bottom-rim dielectric charging-up (§10–11)** | field-line screen + self-consistent-sim sign (literature) | **Leading candidate** — a *positive* bottom rim (returning ions) suppresses extraction: right direction, rough magnitude and E_ind-independence. Gap-dependence open (needs σ per gap) |
-| — | Measured rise at small induction gaps (§8) | exact-field sweep + voltage convention | **Open** — charging (§11) is the leading candidate; its gap-dependence is unresolved |
+| 7 | **Bottom-rim dielectric charging-up (§10–12)** | field-line screen; mean-avalanche deposition at σ = 0 | **Leading candidate** — the rim charges *positive* at every gap (§12), and a positive rim suppresses extraction. The equilibrium σ(gap) is still open (neBEM charging-up, §12) |
+| — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through corner-wrapping avalanches whose gain rests on the local-field approximation (§12 caveats) |
 
-## 13. Reproducing
+## 14. Reproducing
 
 Simulation outputs live under `results/` (gitignored):
 
@@ -367,8 +432,9 @@ Simulation outputs live under `results/` (gitignored):
   (`raw_nebem_sweep.csv`) and a `dump_raw_field` slice through the copper edge
   (`raw_vs_grid_field_ig0p5.csv`).
 - `results/extraction_charging/` — the high-statistics exact-field collection sweep with
-  `dump_collection` (`collection_endpoints.csv` per gap, for the recapture map) and the
-  `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen.
+  `dump_collection` (`collection_endpoints.csv` per gap, for the recapture map), the
+  `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen and the
+  ion tracer (`dump_ig0p1` … `dump_ig1p0`), and the σ = 0 mean-avalanche runs (`meanaval_sigma0/`, §12).
 
 Figures in this note regenerate from those outputs via:
 
@@ -381,14 +447,22 @@ python3 scripts/plot_rawfield_sweep.py          # -> docs/figures/rawfield_sweep
 python3 scripts/plot_recapture_map.py  <run_dir>  # -> <run_dir>/recapture_map.png (§9)
 python3 scripts/screen_rim_charge.py   <dump_dir> <σ…>   # field-line screen table (§11)
 python3 scripts/plot_rim_charge_screen.py <dump_dir>     # -> docs/figures/rim_charge_screen.png (§11)
+python3 scripts/meanaval_rim.py results/extraction_charging/meanaval_sigma0   # §12 table
 ```
 
 Diagnostics used by this investigation (in `src/thgem_sim.cc`):
 
 - `simulation.collect_only` — endpoint collection without induced-signal weighting (commit `44cecd1`).
 - `fields.use_raw_nebem` — transport on the exact `ComponentNeBem3d`, bypassing the uniform grid; the
-  correct field at the thin copper edge. **Slow** — use a small `simulation.max_avalanche_size` (the
-  collection fraction is cap-independent) and a few events (commit `81f773c`).
+  correct field at the thin copper edge. **Slow** with microscopic tracking. A small
+  `simulation.max_avalanche_size` keeps it tractable but is *not* neutral: it tracks only the early,
+  mid-hole electrons (§12). For uncapped avalanches use the mean-avalanche mode below (commit `81f773c`).
+- `simulation.mc_electron_transport`, `mc_weighted_paths`, `mc_step_um`, `mc_ion_samples` — `AvalancheMC`
+  electrons for collect-only runs, and the weighted mean-avalanche paths of §12 (dump gains a `weight`
+  column and ion-birth rows, species `b`).
+- `source.release_r_max_cm` — release (x, y) uniformly over a disk about the hole axis (keeps a
+  `release_z_cm` inside the hole off the dielectric; `AvalancheMicroscopic` throws on a start outside a
+  drift medium).
 - `fields.dump_raw_field` — dump the exact vs grid field to `raw_vs_grid_field.csv`. The slice now
   spans the hole exit → full induction gap (anode⁺ … −100 µm, axis → past the rim) so the charge
   screen can trace drift lines to the anode (commit `81f773c`, region extended for §11).
