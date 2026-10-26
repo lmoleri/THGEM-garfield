@@ -128,6 +128,25 @@ class ChargedDielectricTube : public SolidTube {
   }
 };
 
+// neBEM component with a periodic medium lookup.  neBEM tiles the field over the lattice,
+// but the geometry holds only the central cell's solids, so beyond the cell edge every point
+// reads as gas — a charge that crosses the edge inside the plate drifts through a neighbour's
+// FR4 or copper in a non-gas field, and one that funnels into a neighbouring hole meets no
+// walls.  Fold (x, y) into the central cell before the lookup.  Points inside the cell, and
+// so the solve and the sampled field maps, are unaffected.
+class PeriodicNeBem3d : public ComponentNeBem3d {
+ public:
+  void SetFoldPitch(const double pitch) { m_pitch = pitch; }
+  Garfield::Medium* GetMedium(const double x, const double y, const double z) override {
+    if (m_pitch <= 0.) return ComponentNeBem3d::GetMedium(x, y, z);
+    return ComponentNeBem3d::GetMedium(x - m_pitch * std::round(x / m_pitch),
+                                       y - m_pitch * std::round(y / m_pitch), z);
+  }
+
+ private:
+  double m_pitch = 0.;
+};
+
 
 // ─── Configuration structs ────────────────────────────────────────────────────
 
@@ -204,6 +223,10 @@ struct SourceConfig {
   // bypassing the drift-gap height — e.g. inside the hole near the wall to probe where
   // the field steers it.  nullopt → the normal drift-gap release above the top copper.
   std::optional<double> releaseZCm = std::nullopt;
+  // Diagnostic: sample the release (x, y) uniformly over a disk of this radius [cm] about
+  // the hole axis instead of over the unit cell — keeps a release_z_cm inside the hole off
+  // the dielectric (AvalancheMicroscopic throws on a start outside a drift medium).
+  std::optional<double> releaseRMaxCm = std::nullopt;
 };
 
 struct GasConfig {
@@ -272,6 +295,22 @@ struct SimulationConfig {
   // collect-only / drift-only modes (see docs/extraction_ratio_investigation.md).  Off
   // by default — it does not affect transport, caches or any other output.
   bool        dumpCollection   = false;
+  // Electron transport for collect-only avalanche runs: AvalancheMicroscopic (default,
+  // collision by collision) or AvalancheMC (drift + diffusion + Townsend/attachment from
+  // the Magboltz gas tables, in mcStepUm distance steps).  MC needs ~100x fewer field
+  // evaluations per electron, which is what makes an *uncapped* avalanche tractable on
+  // the exact (raw neBEM) field, where every evaluation is slow (rim-charging study,
+  // docs/extraction_ratio_investigation.md).
+  bool        mcElectronTransport = false;
+  double      mcStepUm         = 2.0;
+  // With mcElectronTransport: replace the branching avalanche by its exact mean
+  // (Feynman–Kac).  One non-branching drift-diffusion path per event, weighted by
+  // G = ∫(α−η)·v_d dt from the gas tables on the transport field: the path end carries
+  // e^G electrons, the ion births along it α·v_d·dt·e^G (sampled at mcIonSamples points),
+  // attachment η·v_d·dt·e^G.  One drift line instead of the 10^4–10^5 of a full avalanche
+  // at ΔV ≈ 1.9 kV; the weights go in the dump's `weight` column.
+  bool        mcWeightedPaths  = false;
+  std::size_t mcIonSamples     = 10;
 };
 
 // Front-end amplifier (CIVIDEC C2-TCT broadband transimpedance current amp): turns a
@@ -611,6 +650,8 @@ Config LoadConfig(const fs::path& path) {
     }
     if (const auto* rz = FindMember(*s, "release_z_cm", {"source", "release_z_cm"}))
       if (rz->is_number()) cfg.source.releaseZCm = rz->get<double>();
+    if (const auto* rr = FindMember(*s, "release_r_max_cm", {"source", "release_r_max_cm"}))
+      if (rr->is_number()) cfg.source.releaseRMaxCm = rr->get<double>();
   }
 
   if (const auto* g = FindSection(root, "gas")) {
@@ -646,6 +687,10 @@ Config LoadConfig(const fs::path& path) {
     cfg.simulation.ionTimeWindowNs  = ReadDouble(*s, "simulation", "ion_time_window_ns", cfg.simulation.ionTimeWindowNs);
     cfg.simulation.maxIonsDrifted   = ReadSizeT (*s, "simulation", "max_ions_drifted",   cfg.simulation.maxIonsDrifted);
     cfg.simulation.randomSeed       = ReadInt   (*s, "simulation", "random_seed",        cfg.simulation.randomSeed);
+    cfg.simulation.mcElectronTransport = ReadBool(*s, "simulation", "mc_electron_transport", cfg.simulation.mcElectronTransport);
+    cfg.simulation.mcStepUm         = ReadDouble(*s, "simulation", "mc_step_um",         cfg.simulation.mcStepUm);
+    cfg.simulation.mcWeightedPaths  = ReadBool  (*s, "simulation", "mc_weighted_paths",  cfg.simulation.mcWeightedPaths);
+    cfg.simulation.mcIonSamples     = ReadSizeT (*s, "simulation", "mc_ion_samples",     cfg.simulation.mcIonSamples);
   }
 
   if (const auto* a = FindSection(root, "amplifier")) {
@@ -694,6 +739,10 @@ Config LoadConfig(const fs::path& path) {
   if (cfg.simulation.timeWindowNs <= 0.) throw std::runtime_error("simulation.time_window_ns must be positive");
   if (cfg.simulation.timeStepNs   <= 0.) throw std::runtime_error("simulation.time_step_ns must be positive");
   if (cfg.simulation.randomSeed   <  0)  throw std::runtime_error("simulation.random_seed must be >= 0");
+  if (cfg.simulation.mcStepUm     <= 0.) throw std::runtime_error("simulation.mc_step_um must be positive");
+  if (cfg.simulation.mcWeightedPaths && !cfg.simulation.mcElectronTransport)
+    throw std::runtime_error("simulation.mc_weighted_paths requires mc_electron_transport");
+  if (cfg.simulation.mcIonSamples == 0) throw std::runtime_error("simulation.mc_ion_samples must be >= 1");
 
   return cfg;
 }
@@ -787,6 +836,15 @@ std::string SetupGas(MediumMagboltz& gas, const GasConfig& cfg,
     gas.WriteGasFile(gasFile);
     std::cout << "  Gas table saved to: " << gasFile << "\n";
   }
+
+  // The tables carry no Townsend/attachment threshold (footer "Thresholds: 1 1 1"), so
+  // Medium::Alpha applies its default quadratic interpolation across the α = 0 → α > 0
+  // step (zero stored as log α ≈ −30): on this coarse log-spaced table that overshoots by
+  // up to ~10^3 between the 10 and 25 kV/cm points (and inflates η near 3 kV/cm).  Linear
+  // (log–log) interpolation is monotonic.  Only users of the α/η tables are affected —
+  // AvalancheMC electrons; the microscopic avalanche samples the cross sections directly.
+  gas.SetInterpolationMethodTownsend(1);
+  gas.SetInterpolationMethodAttachment(1);
 
   // Cap the microscopic collision-rate table well below the transport-table EFINAL.
   // AvalancheMicroscopic draws every step from the *maximum* rate over the whole energy
@@ -986,6 +1044,7 @@ class ThgemDetector {
                                      static_cast<std::size_t>(g.maxElements));
     nebem_.SetPeriodicityX(geom_.pitchCm);
     nebem_.SetPeriodicityY(geom_.pitchCm);
+    nebem_.SetFoldPitch(geom_.pitchCm);
     const auto pc = static_cast<std::size_t>(g.periodicCopies);
     nebem_.SetPeriodicCopies(pc, pc, 0);
     // Performance: evaluate full elements only for the central cell / first ring,
@@ -1043,7 +1102,7 @@ class ThgemDetector {
   MediumConductor cu_;
   MediumPlastic   diel_;
   GeometrySimple  geo_;
-  ComponentNeBem3d nebem_;
+  PeriodicNeBem3d nebem_;
   std::vector<std::unique_ptr<Solid>> solids_;
   ThgemGeom geom_;
   Garfield::Medium* gasPtr_ = nullptr;
@@ -1570,6 +1629,30 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
               << " um steps, " << sim.ionTimeWindowNs << " ns time window.\n";
   }
 
+  // MC electron transport (collect-only, opt-in): drift + diffusion + Townsend/attachment
+  // from the gas tables in fixed distance steps.  AvalancheElectron(.., holes=false)
+  // transports the electrons only — the created ions are counted, not drifted — and every
+  // secondary is its own seed (independent diffusion), so path.front() of each electron is
+  // its ionisation point, i.e. where its partner ion was born.
+  std::optional<AvalancheMC> mcAval;
+  if (sim.mcElectronTransport) {
+    mcAval.emplace(&sensor);
+    mcAval->SetDistanceSteps(sim.mcStepUm * 1.e-4);
+    mcAval->SetTimeWindow(0., sim.timeWindowNs);
+    mcAval->EnableSignalCalculation(false);
+    if (sim.maxAvalancheSize > 0) mcAval->EnableAvalancheSizeLimit(sim.maxAvalancheSize);
+    if (sim.mcWeightedPaths) {
+      // Mean-avalanche mode: one non-branching path per event; gain and attachment enter
+      // through the path weight instead (see SimulationConfig::mcWeightedPaths).
+      mcAval->EnableMultiplication(false);
+      mcAval->EnableAttachment(false);
+      mcAval->EnableDriftLines(true);
+    }
+    std::cout << "  Electron transport: AvalancheMC (gas-table drift/diffusion/Townsend), "
+              << sim.mcStepUm << " um steps"
+              << (sim.mcWeightedPaths ? ", weighted mean-avalanche paths" : "") << ".\n";
+  }
+
   std::vector<double> anodeCharges, topCharges, botCharges, chargeRatios;
   std::vector<double> primaryCounts, avalancheSizes;
   // Avalanche-mode electron-collection fractions, one entry per event: where the
@@ -1577,6 +1660,14 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // with the total number of produced electrons as the denominator.
   std::vector<double> collAnodeFrac, collTopCuFrac, collBottomCuFrac, collUnresFrac,
                       collDielectricFrac, collAttachedFrac;
+  // Weighted mean-avalanche paths (mc_weighted_paths): per-path expected electrons by fate
+  // (collectCategory → weight, plus the per-path total) for pooled ratio estimators, and
+  // the r-aware surface weights summed over the run.
+  std::vector<std::map<std::string, double>> wPathFate;
+  std::vector<double> wPathTotal;
+  std::map<std::string, double> wSurfElec;
+  double wIonBirths = 0.;
+  std::size_t wTrapped = 0;   // paths that ended at the time window (excluded from the sums)
   anodeCharges.reserve(sim.nEvents);
   topCharges.reserve(sim.nEvents);
   botCharges.reserve(sim.nEvents);
@@ -1592,10 +1683,16 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   // where it stopped (in the hole, on the plate, in the drift gap, below the plate).
   std::size_t nMultiplied = 0;
   std::map<std::string, int> primaryFate;
-  auto classifyEndZone = [&g](double xe, double ye, double ze) -> std::string {
+  // Radius from the nearest hole axis: charges may cross into a neighbouring cell (the
+  // lattice is periodic), so fold (x, y) into the central cell first.
+  auto radiusInCell = [&g](double x, double y) {
+    return std::hypot(x - g.pitchCm * std::round(x / g.pitchCm),
+                      y - g.pitchCm * std::round(y / g.pitchCm));
+  };
+  auto classifyEndZone = [&g, radiusInCell](double xe, double ye, double ze) -> std::string {
     if (ze > g.zTopCuTop) return "in-gap";       // still above the plate
     if (ze < g.zBotCuBot) return "below-plate";  // through the hole toward the anode
-    return (std::hypot(xe, ye) < g.rHoleCm) ? "in-hole" : "in-plate";
+    return (radiusInCell(xe, ye) < g.rHoleCm) ? "in-hole" : "in-plate";
   };
 
   // Drift-only (transparency) mode: where each drifted electron ends up.  The status
@@ -1618,17 +1715,52 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
   auto categorizeCollection =
       [&g](int status, double /*xe*/, double /*ye*/, double ze) -> std::string {
     if (status == Garfield::StatusAttached) return "attached";
-    if (ze < g.zBotCuBot)  return "anode";       // extracted below the bottom copper
+    // extracted below the bottom copper (1 µm clear of its face: a transporter stopped on
+    // that face from below can end a hair beneath it)
+    if (ze < g.zBotCuBot - 1.e-4) return "anode";
+    // Still drifting in the plate zone when the time window closed: not deposited anywhere
+    // (an electron held in the rim recess, say) — unresolved, like one left in the drift gap.
+    if (status == Garfield::StatusOutsideTimeWindow) return "drift";
     if (ze > g.zTopCuTop)  return "drift";       // still in the drift gap (unresolved)
     if (ze >  g.zDielHalf) return "top_cu";      // stopped on the top copper
     if (ze < -g.zDielHalf) return "bottom_cu";   // stopped on the bottom copper
     return "dielectric";                         // stopped on the hole wall (dielectric)
   };
 
+  // r-aware surface classifier for the rim-charging deposition study: separates the exposed
+  // dielectric bottom RIM (r in [rHole, rCu], lower exposed band) from the bottom COPPER
+  // (r >= rCu), the hole wall and the top surfaces — which categorizeCollection (z-only) cannot.
+  const double rCuCm    = g.rHoleCm + g.rimCm;
+  const double rimBandCm = (g.rimChargeHeightCm > 0.) ? g.rimChargeHeightCm : g.tCuCm;
+  // The holes are 4(n−1)-gons inscribed in the nominal circle (SolidHole default), so the
+  // copper wall lies anywhere between the inradius rCu·cos(π/N) and rCu: test against the
+  // inradius, or an electron stopped on a copper flat is tallied as rim.
+  const double rCuInCm = rCuCm * std::cos(M_PI / (4.0 * (cfg.geometry.holeSectors - 1))) - 1.e-5;
+  auto categorizeSurface =
+      [&g, rCuInCm, rimBandCm, radiusInCell](int status, double xe, double ye,
+                                              double ze) -> std::string {
+    if (status == Garfield::StatusAttached) return "attached";
+    const double re = radiusInCell(xe, ye);
+    if (ze < g.zBotCuBot - 1.e-4) return "anode";   // 1 µm clear of the copper face (above)
+    if (ze > g.zTopCuTop) return "drift";
+    if (status == Garfield::StatusOutsideTimeWindow) return "unresolved";   // not deposited
+    if (re >= rCuInCm) {                           // at the copper opening
+      if (ze < -g.zDielHalf) return "bottom_cu";
+      if (ze >  g.zDielHalf) return "top_cu";
+    }
+    // exposed dielectric rim / hole wall (r in [rHole, rCu]), split by z
+    if (ze < -g.zDielHalf + rimBandCm) return "bottom_rim";
+    if (ze >  g.zDielHalf - rimBandCm) return "top_rim";
+    return "hole_wall";
+  };
+
   // Optional per-electron collection dump: the birth position/energy, endpoint and fate
   // of every classified electron, appended across distance points to one CSV beside the
   // ROOT file.  Lets a recapture-geometry study see *where* on the copper electrons land
   // and *where* they were born (docs/extraction_ratio_investigation.md).
+  // Weighted mean-avalanche paths add a trailing `weight` column (expected number of
+  // electrons / ions the row stands for); species 'b' rows are sampled ion births.
+  const bool weightedPaths = sim.mcElectronTransport && sim.mcWeightedPaths;
   std::ofstream collDump;
   if (sim.dumpCollection && distDir && distDir->GetFile()) {
     const fs::path csv = fs::path(distDir->GetFile()->GetName()).parent_path()
@@ -1636,15 +1768,59 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     const bool fresh = !fs::exists(csv) || fs::file_size(csv) == 0;
     collDump.open(csv.string(), std::ios::app);
     if (fresh && collDump)
-      collDump << "dist_label,event,birth_x_cm,birth_y_cm,birth_z_cm,birth_E_eV,"
-                  "end_x_cm,end_y_cm,end_z_cm,category\n";
+      collDump << "dist_label,event,species,birth_x_cm,birth_y_cm,birth_z_cm,birth_E_eV,"
+                  "end_x_cm,end_y_cm,end_z_cm,surface"
+               << (weightedPaths ? ",weight" : "") << '\n';
   }
-  auto dumpColl = [&](std::size_t ev, double bx, double by, double bz, double bE,
-                      double ex, double ey, double ez, const std::string& cat) {
+  auto dumpColl = [&](std::size_t ev, char species, double bx, double by, double bz, double bE,
+                      double ex, double ey, double ez, const std::string& surf, double w = 1.) {
     if (!collDump) return;
-    collDump << distLabel << ',' << ev << ','
+    collDump << distLabel << ',' << ev << ',' << species << ','
              << bx << ',' << by << ',' << bz << ',' << bE << ','
-             << ex << ',' << ey << ',' << ez << ',' << cat << '\n';
+             << ex << ',' << ey << ',' << ez << ',' << surf;
+    if (weightedPaths) collDump << ',' << w;
+    collDump << '\n';
+  };
+  // Surface deposition tallies (r-aware) for the rim-charging study: electrons and ions
+  // separately, summed over the run; net rim charge = ion_rim − elec_rim.
+  std::map<std::string, long> elecSurfTally, ionSurfTally;
+
+  // Per-event collection counts behind the anode / copper / dielectric fractions, and the
+  // per-electron classification shared by the microscopic and MC transport paths.
+  struct CollCounts { long anode = 0, topCu = 0, bottomCu = 0, unres = 0, dielectric = 0, attached = 0; };
+  auto tallyElectron = [&](CollCounts& c, std::size_t ev, int st,
+                           double bx, double by, double bz, double bE,
+                           double ex, double ey, double ez) {
+    const std::string cat = categorizeCollection(st, ex, ey, ez);
+    if      (cat == "anode")      ++c.anode;
+    else if (cat == "top_cu")     ++c.topCu;
+    else if (cat == "bottom_cu")  ++c.bottomCu;
+    else if (cat == "dielectric") ++c.dielectric;
+    else if (cat == "attached")   ++c.attached;
+    else if (cat == "drift")      ++c.unres;   // still drifting at the time window
+    const std::string surf = categorizeSurface(st, ex, ey, ez);
+    ++elecSurfTally[surf];
+    dumpColl(ev, 'e', bx, by, bz, bE, ex, ey, ez, surf);
+  };
+  auto pushCollFractions = [&](const CollCounts& c, std::size_t n) {
+    const double tot = static_cast<double>(n);
+    collAnodeFrac.push_back(c.anode / tot);
+    collTopCuFrac.push_back(c.topCu / tot);
+    collBottomCuFrac.push_back(c.bottomCu / tot);
+    collUnresFrac.push_back(c.unres / tot);
+    collDielectricFrac.push_back(c.dielectric / tot);
+    collAttachedFrac.push_back(c.attached / tot);
+  };
+  // Ion deposition (charging study): drift one ion from its creation site (= an electron's
+  // birth) and tally where it lands.  Needs enable_ion_drift (the ionDrift transporter).
+  auto depositIon = [&](std::size_t ev, double x, double y, double z, double t, double w = 1.) {
+    if (!ionDrift->DriftIon(x, y, z, t)) return;
+    const auto& ions = ionDrift->GetIons();
+    if (ions.empty() || ions.front().path.empty()) return;
+    const auto& pe = ions.front().path.back();
+    const std::string surf = categorizeSurface(ions.front().status, pe.x, pe.y, pe.z);
+    ++ionSurfTally[surf];
+    dumpColl(ev, 'i', x, y, z, 0., pe.x, pe.y, pe.z, surf, w);
   };
 
   // ── Event loop ───────────────────────────────────────────────────────────────
@@ -1656,12 +1832,19 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     // in the drift gap above the top-copper surface.  A fixed x pins y = 0, so
     // x = 0 lands on the hole axis (a deterministic on-axis scan); with x random
     // both coordinates are sampled over the cell (realistic collection).
-    const double x0 = fixedXCm.has_value()
-                          ? *fixedXCm
-                          : gRandom->Uniform(-cellHalfCm, cellHalfCm);
-    const double y0 = fixedXCm.has_value()
-                          ? 0.0
-                          : gRandom->Uniform(-cellHalfCm, cellHalfCm);
+    double x0 = fixedXCm.has_value()
+                    ? *fixedXCm
+                    : gRandom->Uniform(-cellHalfCm, cellHalfCm);
+    double y0 = fixedXCm.has_value()
+                    ? 0.0
+                    : gRandom->Uniform(-cellHalfCm, cellHalfCm);
+    // Diagnostic override: uniform over a disk about the hole axis (release_r_max_cm).
+    if (cfg.source.releaseRMaxCm.has_value()) {
+      const double rr = *cfg.source.releaseRMaxCm * std::sqrt(gRandom->Uniform());
+      const double ph = gRandom->Uniform(0., 2. * M_PI);
+      x0 = rr * std::cos(ph);
+      y0 = rr * std::sin(ph);
+    }
 
     const double heightMm = distOptMm.has_value()
                                 ? *distOptMm
@@ -1694,11 +1877,165 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
         const std::string cat = categorizeCollection(st, x1, y1, z1);
         ++collectTally[cat];
         ++primaryFate[DriftStatusToString(st) + " @ " + classifyEndZone(x1, y1, z1)];
-        dumpColl(ev, a0, b0, c0, e0, x1, y1, z1, cat);
+        dumpColl(ev, 'e', a0, b0, c0, e0, x1, y1, z1, categorizeSurface(st, x1, y1, z1));
       }
       if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents)
         std::cout << "  height=" << distLabel << ": " << (ev + 1) << "/" << sim.nEvents
                   << " electrons drifted\n";
+      continue;
+    }
+
+    // Weighted mean-avalanche path (mc_weighted_paths): one drift-diffusion path, with the
+    // expected multiplicity G = ∫(α−η)·v_d dt accumulated along it from the gas tables
+    // (trapezoid per step).  More than 0.5 mm above the top copper the field is the plain
+    // drift field, far below the ionisation threshold, so α = η = 0 is taken there.
+    if (mcAval && weightedPaths) {
+      mcAval->DriftElectron(x0, y0, z0, 0.);
+      const auto& els = mcAval->GetElectrons();
+      if (!els.empty() && els.front().status == Garfield::StatusOutsideTimeWindow) {
+        // Held until the time window closed (a field pocket): its e^G would be the growth
+        // over the whole hold, not an avalanche — count the path, keep it out of the sums.
+        ++wTrapped;
+        const auto& e = els.front().path.back();
+        ++primaryFate[DriftStatusToString(els.front().status) + " @ " +
+                      classifyEndZone(e.x, e.y, e.z)];
+      } else if (!els.empty() && els.front().path.size() >= 2) {
+        const auto& el = els.front();
+        const auto& path = el.path;
+        const std::size_t np = path.size();
+        // A path stopped on a solid ends ~1e-8 cm from a boundary panel, where the raw neBEM
+        // field is singular, so its last point reuses the previous point's rates.  The field
+        // is also clamped at the gas-table ceiling: no physical field here comes near it, but
+        // a point landing almost on a panel can return an arbitrarily large one, and α
+        // extrapolated from that would swamp the path weight.
+        const bool onSolid = el.status == Garfield::StatusLeftDriftMedium;
+        std::vector<double> ka(np, 0.), ke(np, 0.);   // α·v_d, η·v_d [1/ns]
+        for (std::size_t i = 0; i < np; ++i) {
+          if (path[i].z > g.zTopCuTop + 0.05) continue;
+          if (onSolid && i > 0 && i + 1 == np) {
+            ka[i] = ka[i - 1];
+            ke[i] = ke[i - 1];
+            continue;
+          }
+          double ex = 0., ey = 0., ez = 0.;
+          Garfield::Medium* m = nullptr;
+          int st = 0;
+          sensor.ElectricField(path[i].x, path[i].y, path[i].z, ex, ey, ez, m, st);
+          if (st != 0 || !m) continue;
+          const double emag = std::sqrt(ex * ex + ey * ey + ez * ez);
+          if (emag > cfg.gas.eFieldMaxVcm) {
+            const double s = cfg.gas.eFieldMaxVcm / emag;
+            ex *= s; ey *= s; ez *= s;
+          }
+          double a = 0., e = 0., vx = 0., vy = 0., vz = 0.;
+          m->ElectronTownsend(ex, ey, ez, 0., 0., 0., a);
+          m->ElectronAttachment(ex, ey, ez, 0., 0., 0., e);
+          m->ElectronVelocity(ex, ey, ez, 0., 0., 0., vx, vy, vz);
+          const double v = std::sqrt(vx * vx + vy * vy + vz * vz);
+          ka[i] = std::max(a, 0.) * v;
+          ke[i] = std::max(e, 0.) * v;
+        }
+        // Expected ionisations / attachments per step, and the final multiplicity e^G.
+        std::vector<double> cumIon(np - 1);
+        double G = 0., wIon = 0., wAtt = 0.;
+        for (std::size_t i = 0; i + 1 < np; ++i) {
+          const double dt = path[i + 1].t - path[i].t;
+          const double ra = 0.5 * (ka[i] + ka[i + 1]) * dt;
+          const double re = 0.5 * (ke[i] + ke[i + 1]) * dt;
+          const double eG = std::exp(G);
+          wIon += eG * ra;
+          wAtt += eG * re;
+          cumIon[i] = wIon;
+          G += ra - re;
+        }
+        const double wEnd = std::exp(G);
+        const auto& b = path.front();
+        const auto& e = path.back();
+        std::map<std::string, double> fate;
+        fate[categorizeCollection(el.status, e.x, e.y, e.z)] += wEnd;
+        if (wAtt > 0.) fate["attached"] += wAtt;
+        wPathFate.push_back(fate);
+        wPathTotal.push_back(wEnd + wAtt);
+        const std::string surf = categorizeSurface(el.status, e.x, e.y, e.z);
+        wSurfElec[surf] += wEnd;
+        if (wAtt > 0.) wSurfElec["attached"] += wAtt;
+        wIonBirths += wIon;
+        dumpColl(ev, 'e', b.x, b.y, b.z, 0., e.x, e.y, e.z, surf, wEnd);
+        if (wAtt > 0.) dumpColl(ev, 'e', b.x, b.y, b.z, 0., e.x, e.y, e.z, "attached", wAtt);
+        // Ion births: stratified samples ∝ α·v_d·dt·e^G along the path, each standing for
+        // wIon/K ions (also drifted to their surface when enable_ion_drift is set).
+        if (wIon > 0.) {
+          const std::size_t K = sim.mcIonSamples;
+          for (std::size_t k = 0; k < K; ++k) {
+            const double u = (k + gRandom->Uniform()) / K * wIon;
+            const std::size_t i = std::min<std::size_t>(
+                std::lower_bound(cumIon.begin(), cumIon.end(), u) - cumIon.begin(), np - 2);
+            const double f = gRandom->Uniform();
+            const double bx = path[i].x + f * (path[i + 1].x - path[i].x);
+            const double by = path[i].y + f * (path[i + 1].y - path[i].y);
+            const double bz = path[i].z + f * (path[i + 1].z - path[i].z);
+            const double bt = path[i].t + f * (path[i + 1].t - path[i].t);
+            dumpColl(ev, 'b', bx, by, bz, 0., bx, by, bz, "birth", wIon / K);
+            if (sim.enableIonDrift && ionDrift) depositIon(ev, bx, by, bz, bt, wIon / K);
+          }
+        }
+        const double gainEv = 1. + wIon;
+        hAvalSize.Fill(gainEv * nPrimary);
+        avalancheSizes.push_back(gainEv * nPrimary);
+        if (gainEv > 2.) ++nMultiplied;
+        ++primaryFate[DriftStatusToString(el.status) + " @ " + classifyEndZone(e.x, e.y, e.z)];
+      }
+      if (ev == 0) {
+        const double dt =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - tEvent).count();
+        std::cout << "  [timing] first event: " << FormatNumber(dt, 2) << " s"
+                  << " (one weighted path, AvalancheMC)\n";
+      }
+      if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents)
+        std::cout << "  height=" << distLabel << ": " << (ev + 1) << "/" << sim.nEvents
+                  << " events processed\n";
+      continue;
+    }
+
+    // MC electron transport (collect-only): the same tallies and dump as the microscopic
+    // path below, from the AvalancheMC endpoints (index 0 is the primary).  No drift lines,
+    // cloud or signals — a collect-only run writes none of them.
+    if (mcAval) {
+      mcAval->AvalancheElectron(x0, y0, z0, 0.);
+      const auto& els = mcAval->GetElectrons();
+      const std::size_t nEp = els.size();
+      const int totalAvalElectrons = static_cast<int>(nEp) * nPrimary;
+      hAvalSize.Fill(static_cast<double>(totalAvalElectrons));
+      avalancheSizes.push_back(static_cast<double>(totalAvalElectrons));
+      if (nEp > 1) ++nMultiplied;
+      if (nEp > 0) {
+        const auto& pe = els.front().path.back();
+        ++primaryFate[DriftStatusToString(els.front().status) + " @ " +
+                      classifyEndZone(pe.x, pe.y, pe.z)];
+        CollCounts counts;
+        for (const auto& el : els) {
+          const auto& b = el.path.front();
+          const auto& e = el.path.back();
+          tallyElectron(counts, ev, el.status, b.x, b.y, b.z, 0., e.x, e.y, e.z);
+        }
+        pushCollFractions(counts, nEp);
+        if (sim.enableIonDrift && ionDrift) {
+          const std::size_t nIons = (sim.maxIonsDrifted > 0) ? std::min(nEp, sim.maxIonsDrifted) : nEp;
+          for (std::size_t i = 0; i < nIons; ++i) {
+            const auto& b = els[i].path.front();
+            depositIon(ev, b.x, b.y, b.z, b.t);
+          }
+        }
+      }
+      if (ev == 0) {
+        const double dt =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - tEvent).count();
+        std::cout << "  [timing] first event: " << FormatNumber(dt, 2) << " s"
+                  << " (" << nEp << " e⁻ tracked, AvalancheMC)\n";
+      }
+      if ((ev + 1) % progressStep == 0 || ev + 1 == sim.nEvents)
+        std::cout << "  height=" << distLabel << ": " << (ev + 1) << "/" << sim.nEvents
+                  << " events processed\n";
       continue;
     }
 
@@ -1724,28 +2061,27 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     // collected (anode / THGEM copper), so frac_anode = electrons reaching the anode /
     // total produced — the no-induced-signal "Anode/THGEM-top" of the measurement.
     if (nEp > 0) {
-      long nColAnode = 0, nColTopCu = 0, nColBottomCu = 0, nColUnres = 0,
-           nColDielectric = 0, nColAttached = 0;
+      CollCounts counts;
       for (std::size_t i = 0; i < nEp; ++i) {
         double ex0, ey0, ez0, et0, ee0, ex1, ey1, ez1, et1, ee1; int est;
         aval.GetElectronEndpoint(i, ex0, ey0, ez0, et0, ee0,
                                     ex1, ey1, ez1, et1, ee1, est);
-        const std::string cat = categorizeCollection(est, ex1, ey1, ez1);
-        if      (cat == "anode")      ++nColAnode;
-        else if (cat == "top_cu")     ++nColTopCu;
-        else if (cat == "bottom_cu")  ++nColBottomCu;
-        else if (cat == "dielectric") ++nColDielectric;
-        else if (cat == "attached")   ++nColAttached;
-        else if (cat == "drift")      ++nColUnres;   // still drifting at the time window
-        dumpColl(ev, ex0, ey0, ez0, ee0, ex1, ey1, ez1, cat);
+        tallyElectron(counts, ev, est, ex0, ey0, ez0, ee0, ex1, ey1, ez1);
       }
-      const double tot = static_cast<double>(nEp);
-      collAnodeFrac.push_back(nColAnode / tot);
-      collTopCuFrac.push_back(nColTopCu / tot);
-      collBottomCuFrac.push_back(nColBottomCu / tot);
-      collUnresFrac.push_back(nColUnres / tot);
-      collDielectricFrac.push_back(nColDielectric / tot);
-      collAttachedFrac.push_back(nColAttached / tot);
+      pushCollFractions(counts, nEp);
+    }
+
+    // Ion deposition (charging study): on the collection path, drift each avalanche ion from
+    // its creation site (= each electron's birth) and classify where it lands, so the
+    // bottom-rim net charge (ions − electrons) can be tallied.  Only runs with
+    // enable_ion_drift; the signal path below has its own ion drift for !collectOnly.
+    if (collectOnly && sim.enableIonDrift && ionDrift && nEp > 0) {
+      const std::size_t nIons = (sim.maxIonsDrifted > 0) ? std::min(nEp, sim.maxIonsDrifted) : nEp;
+      for (std::size_t i = 0; i < nIons; ++i) {
+        double xi0, yi0, zi0, ti0, ei0, xi1, yi1, zi1, ti1, ei1; int est;
+        aval.GetElectronEndpoint(i, xi0, yi0, zi0, ti0, ei0, xi1, yi1, zi1, ti1, ei1, est);
+        depositIon(ev, xi0, yi0, zi0, ti0);
+      }
     }
 
     // Primary electron drift line (track 0).
@@ -2051,6 +2387,62 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       std::cout << "  [transparency] note: " << FormatNumber(100. * fracDrift, 0)
                 << "% of electrons did not resolve within the time window — raise "
                    "time_window_ns or e_drift for a cleaner measurement.\n";
+  } else if (!wPathTotal.empty()) {
+    // Weighted mean-avalanche paths: each path stands for its whole expected avalanche, so
+    // the collection fractions are pooled ratio estimators Σ w_cat / Σ w_total over the
+    // paths (not a mean of per-path fractions), with the delta-method SEM.
+    const double n = static_cast<double>(wPathTotal.size());
+    const double sumT = std::accumulate(wPathTotal.begin(), wPathTotal.end(), 0.);
+    auto ratio = [&](const char* cat) {
+      auto w = [&](std::size_t i) {
+        const auto it = wPathFate[i].find(cat);
+        return it != wPathFate[i].end() ? it->second : 0.;
+      };
+      double sumA = 0.;
+      for (std::size_t i = 0; i < wPathFate.size(); ++i) sumA += w(i);
+      const double r = sumT > 0. ? sumA / sumT : 0.;
+      double v = 0.;
+      for (std::size_t i = 0; i < wPathFate.size(); ++i) {
+        const double d = w(i) - r * wPathTotal[i];
+        v += d * d;
+      }
+      const double tbar = sumT / n;
+      const double sem = (n > 1. && tbar > 0.) ? std::sqrt(v / (n * (n - 1.))) / tbar : 0.;
+      return std::make_pair(r, sem);
+    };
+    const auto rAnode = ratio("anode"), rBottom = ratio("bottom_cu");
+    s.fracAnode       = rAnode.first;
+    s.semFracAnode    = rAnode.second;
+    s.fracBottomCu    = rBottom.first;
+    s.semFracBottomCu = rBottom.second;
+    s.fracTopCu       = ratio("top_cu").first;
+    s.fracDielectric  = ratio("dielectric").first;
+    s.fracAttached    = ratio("attached").first;
+    const double denom = s.fracAnode + s.fracBottomCu;
+    s.anodeOverAnodePlusBottom = denom > 0. ? s.fracAnode / denom : 0.;
+    const double fracUnres = ratio("drift").first;
+    std::cout << "  [collection] (weighted mean avalanche, " << wPathTotal.size()
+              << " paths) anode " << FormatNumber(100. * s.fracAnode, 1) << "%"
+              << " ± " << FormatNumber(100. * s.semFracAnode, 1)
+              << ", bottom-Cu " << FormatNumber(100. * s.fracBottomCu, 1) << "%"
+              << ", top-Cu " << FormatNumber(100. * s.fracTopCu, 1) << "%"
+              << ", dielectric " << FormatNumber(100. * s.fracDielectric, 1) << "%"
+              << ", attached " << FormatNumber(100. * s.fracAttached, 1) << "%"
+              << ", unresolved " << FormatNumber(100. * fracUnres, 1) << "%"
+              << "   anode/total = " << FormatNumber(s.fracAnode, 3)
+              << ", ⟨gain⟩ = " << FormatNumber(s.meanAvalancheSize, 0) << "\n";
+    auto wSurf = [&](const char* k) {
+      const auto it = wSurfElec.find(k);
+      return (it != wSurfElec.end() && sumT > 0.) ? it->second / sumT : 0.;
+    };
+    std::cout << "  [rim-charge] (weighted) electrons: bottom_rim "
+              << FormatNumber(100. * wSurf("bottom_rim"), 2) << "%, hole_wall "
+              << FormatNumber(100. * wSurf("hole_wall"), 2) << "%, bottom_cu "
+              << FormatNumber(100. * wSurf("bottom_cu"), 2) << "%;  ion births "
+              << FormatNumber(wIonBirths / n, 0) << " per path (dump species 'b')\n";
+    if (wTrapped > 0)
+      std::cout << "  [collection] note: " << wTrapped << " path(s) still drifting at the "
+                   "time window were excluded from the weighted sums.\n";
   } else if (!collAnodeFrac.empty()) {
     // Avalanche electron-collection fractions: mean over events of (electrons collected
     // at electrode X) / (total produced), with the event-to-event SEM.  frac_anode is
@@ -2078,6 +2470,15 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
       std::cout << "  [collection] note: " << FormatNumber(100. * fracUnres, 0)
                 << "% of produced electrons did not resolve within the time window — "
                    "raise time_window_ns for a cleaner measurement.\n";
+    if (sim.enableIonDrift) {
+      auto cnt = [](const std::map<std::string, long>& m, const char* k) {
+        auto it = m.find(k); return it != m.end() ? it->second : 0L; };
+      const long er = cnt(elecSurfTally, "bottom_rim"), ir = cnt(ionSurfTally, "bottom_rim");
+      const long ec = cnt(elecSurfTally, "bottom_cu"),  ic = cnt(ionSurfTally, "bottom_cu");
+      std::cout << "  [rim-charge] bottom_rim: ions " << ir << " − electrons " << er
+                << " = net " << (ir - er)
+                << "   (bottom_cu: ions " << ic << " elec " << ec << ")\n";
+    }
   }
   return s;
 }
@@ -2187,6 +2588,9 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
                                      ? json(*cfg.source.fixedDistMm) : json(nullptr);
   jSrc["x_positions_cm"] = cfg.source.fixedXCmList.has_value()
                                ? json(*cfg.source.fixedXCmList) : json(nullptr);
+  // Diagnostic release overrides, echoed only when set.
+  if (cfg.source.releaseZCm)    jSrc["release_z_cm"]     = *cfg.source.releaseZCm;
+  if (cfg.source.releaseRMaxCm) jSrc["release_r_max_cm"] = *cfg.source.releaseRMaxCm;
   return {
     {"geometry", {
       {"hole_diameter_um",       cfg.geometry.holeDiameterUm},
@@ -2260,7 +2664,11 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"ion_time_window_ns", cfg.simulation.ionTimeWindowNs},
       {"max_ions_drifted",   cfg.simulation.maxIonsDrifted},
       {"random_seed",        cfg.simulation.randomSeed},
-      {"dump_collection",    cfg.simulation.dumpCollection}
+      {"dump_collection",    cfg.simulation.dumpCollection},
+      {"mc_electron_transport", cfg.simulation.mcElectronTransport},
+      {"mc_step_um",         cfg.simulation.mcStepUm},
+      {"mc_weighted_paths",  cfg.simulation.mcWeightedPaths},
+      {"mc_ion_samples",     cfg.simulation.mcIonSamples}
     }},
     {"amplifier", {
       {"enable",              cfg.amplifier.enable},
@@ -2322,6 +2730,11 @@ int main(int argc, char* argv[]) {
     // The collection observable needs only the transport field, so sampling drops ~4x.
     cfg.simulation.collectOnly = (cfg.simulation.collectOnly || driftOnly) && !fieldOnly;
     const bool collectOnly = cfg.simulation.collectOnly;
+    // MC electron transport only replaces the collect-only avalanche; the drift-only and
+    // induced-signal paths read AvalancheMicroscopic-specific output.
+    if (cfg.simulation.mcElectronTransport && !fieldOnly && (!collectOnly || driftOnly))
+      throw std::runtime_error("simulation.mc_electron_transport supports collect_only "
+                               "avalanche runs only (not drift_only or induced-signal runs)");
 
     const fs::path runDir = opts.outDir /
         (opts.runName.empty() ? BuildRunFolderName(cfg) : opts.runName);
