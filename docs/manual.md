@@ -415,6 +415,15 @@ anode / THGEM bottom copper / top copper / attached — for electron-transparenc
 `--drift-only`, §13), `store_drift_lines` (needed for the curved 3D lines), `ion_max_step_um`,
 `ion_time_window_ns`, `max_ions_drifted` (cap per event), `random_seed` (0 = time-seeded).
 
+**Diagnostics** (off by default; used by `docs/extraction_ratio_investigation.md`) —
+`simulation.collect_only` (avalanche + collection tally, no induced signals), `dump_collection`
+(per-electron birth/endpoint/surface CSV), `mc_electron_transport` (`AvalancheMC` electrons in
+collect-only runs), `mc_weighted_paths` with `mc_step_um` and `mc_ion_samples` (weighted mean-avalanche
+paths: the uncapped mean avalanche at the cost of one drift line, the way to reach gains of ~10⁵ on the
+exact field), `fields.use_raw_nebem` (transport on the exact neBEM field instead of the sampled grid;
+slow), `fields.dump_raw_field`, `source.release_z_cm` / `release_r_max_cm` (release at a fixed z, over a
+disk about the hole axis).
+
 **`amplifier`** — `enable`, `gain_db`, `input_impedance_ohm`, `bandwidth_high_hz` (upper −3 dB →
 low-pass $\tau$), `output_sample_ns` (boxcar aperture). CIVIDEC C2-TCT datasheet defaults.
 

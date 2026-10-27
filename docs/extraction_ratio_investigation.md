@@ -391,14 +391,42 @@ intervals (`scripts/meanaval_rim.py`).
    ion-rim weight in a validation set): the near-singular field at the sharp bottom-copper inner corner
    multiplies electrons right beside the recessed rim.
 
-**Caveats.** The weights are heavy-tailed (effective sample size 31–126 of 1000 paths; the two seeds at
-0.5/1.0 mm differ beyond their errors), so magnitudes at large gaps are uncertain. More importantly, the
-corner gain is computed in the **local-field approximation**, which is suspect where the field changes
-over ~µm (comparable to the electrons' energy-relaxation length), and the copper corner is modelled
-perfectly sharp. Whether microscopic transport gives the same corner gain is under test (primaries
-released at the hole exit, microscopic vs weighted MC). So far, from z = −150 µm, microscopic tracking
-gives *no less* total gain (17.8 ± 3.2 vs 14.9 ± 2.6 electrons per primary) and a bottom-copper share of
-18 ± 9 % vs 43 %: not conclusive.
+**Caveat: heavy tails.** The weights are heavy-tailed (effective sample size 31–126 of 1000 paths; the
+two seeds at 0.5/1.0 mm differ beyond their errors), so magnitudes at large gaps carry wide intervals.
+
+**Check against microscopic transport.** The corner gain above is computed in the local-field
+approximation, which is suspect where the field changes over ~µm. To test it, primaries were released
+inside the hole near the exit (`source.release_z_cm`, `release_r_max_cm` = 240 µm; ig = 0.5 mm, exact
+field) and transported both ways, weighted mean avalanche vs full microscopic avalanches
+(`scripts/meanaval_validate.py`), binned by release radius:
+
+| release | r [µm] | electrons per primary, weighted → microscopic | → bottom copper, weighted → microscopic | → anode, weighted → microscopic |
+|---|---|---|---|---|
+| z = −190 µm (1500 / 130 primaries) | 0–120 | 3.8 → 6.2 ± 1.1 | 0 → 0 | 0.89 → 0.83 |
+| | 120–200 | 5.1 → 8.0 ± 0.8 | 0.11 ± 0.02 → 0.07 ± 0.03 | 0.80 → 0.82 |
+| | 200–245 | 10.8 ± 1.2 → 23.6 ± 5.4 | 0.50 ± 0.11 → 0.65 ± 0.23 | 0.44 → 0.32 ± 0.03 |
+| z = −150 µm (300 / 48 primaries) | 0–120 | 7.7 → 14.9 ± 3.7 | 0 → 0 | 0.89 → 0.87 |
+| | 120–200 | 13.9 ± 1.7 → 21.4 ± 3.2 | 0.31 ± 0.13 → 0.07 ± 0.02 | 0.61 → 0.83 |
+| | 200–245 | 23 ± 9 → 16 ± 7 | 0.67 ± 0.38 → 0.50 ± 0.32 | 0.27 → 0.40 ± 0.16 |
+
+1. **Microscopic gain is 1.5–2× higher** in every central bin of both tests. The 10-point gas table
+   with log–log interpolation underestimates α between its points. Absolute gains from the weighted
+   mode are therefore low; fractions are less affected, because every path crosses the same interior.
+2. **The corner loss agrees within errors.** For near-wall releases, where electrons wrap the copper
+   corner, microscopic tracking sends 50–65 % of the avalanche to the bottom copper, against 50–67 %
+   weighted. The z = −150 µm mid-radius 0.31 is a heavy-tail fluctuation: the same bin at z = −190 µm,
+   with 650 paths, gives 0.11 against microscopic 0.07.
+3. So there is **no evidence that the local-field model overstates the corner loss**. The falling
+   uncharged extraction vs gap is a property of the modelled geometry at this gain, not a transport
+   artifact; microscopic gain, if anything, makes the corner avalanches heavier.
+
+**Open question: the corner shape.** The effect lives in the near-singular field of a *perfectly sharp*
+bottom-copper inner corner (r = rCu, z = −235 µm). A real etched copper edge is rounded, and the corner
+gain is sensitive to its radius, so the result should be tested against corner rounding before it is
+trusted. The existing `geometry.edge_round_um` widens only the copper's dielectric-side face, not this
+lower corner. Rim charging alone is unlikely to restore the measured trend: its net deposit is largest
+at large gaps (+0.22, +0.18), exactly where the uncharged extraction is already too low, and a positive
+rim suppresses extraction further (§11).
 
 **Next: the self-consistent equilibrium.** neBEM carries the SINP charging-up machinery
 (`ComponentNeBem3d::SetChargingUpOptions(1)` with `neBEMInp/neBEMChargingUp.inp`). Electron and ion
@@ -406,7 +434,8 @@ endpoints are mapped onto the dielectric elements and enter the solve as free ch
 including copper and anode images and FR4 polarisation. It avoids the charged-dielectric/conductor
 rejection of §10 and captures the gap-dependent anode image the §11 free-space screen cannot. Iterating
 deposit → re-solve → re-transport until the net rim deposition vanishes gives the infinite-leakage
-equilibrium per gap.
+equilibrium per gap. Planned order: first the corner-rounding test, then this equilibrium on the
+surviving geometry.
 
 ## 13. Mechanisms tested and excluded
 
@@ -419,7 +448,8 @@ equilibrium per gap.
 | 5 | **Grid field-sampling artifact at the copper edge (§7)** | raw-neBEM vs grid, field dump, wall-release | **Root cause** of the over-extraction — fixed by `use_raw_nebem` |
 | 6 | Copper-edge rounding / conductor in-painting (§7) | `edge_round_um`, `inpaint_conductors` | Do not fix the grid (sub-cell field rotation); kept opt-in, off by default |
 | 7 | **Bottom-rim dielectric charging-up (§10–12)** | field-line screen; mean-avalanche deposition at σ = 0 | **Leading candidate** — the rim charges *positive* at every gap (§12), and a positive rim suppresses extraction. The equilibrium σ(gap) is still open (neBEM charging-up, §12) |
-| — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through corner-wrapping avalanches whose gain rests on the local-field approximation (§12 caveats) |
+| 8 | Local-field approximation overstating the corner gain (§12) | weighted mean avalanche vs microscopic, primaries released at the hole exit | Ruled out within errors: microscopic gives the same corner loss and 1.5–2× *more* gain |
+| — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through avalanches wrapping the sharp bottom-copper corner; next test: corner rounding, then the charging equilibrium |
 
 ## 14. Reproducing
 
@@ -434,7 +464,9 @@ Simulation outputs live under `results/` (gitignored):
 - `results/extraction_charging/` — the high-statistics exact-field collection sweep with
   `dump_collection` (`collection_endpoints.csv` per gap, for the recapture map), the
   `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen and the
-  ion tracer (`dump_ig0p1` … `dump_ig1p0`), and the σ = 0 mean-avalanche runs (`meanaval_sigma0/`, §12).
+  ion tracer (`dump_ig0p1` … `dump_ig1p0`), the σ = 0 mean-avalanche runs (`meanaval_sigma0/`, §12) and
+  the weighted-vs-microscopic checks (`corner_test_z190/`, `exit_test_z150/`, each with its
+  `comparison.txt`).
 
 Figures in this note regenerate from those outputs via:
 
@@ -448,6 +480,7 @@ python3 scripts/plot_recapture_map.py  <run_dir>  # -> <run_dir>/recapture_map.p
 python3 scripts/screen_rim_charge.py   <dump_dir> <σ…>   # field-line screen table (§11)
 python3 scripts/plot_rim_charge_screen.py <dump_dir>     # -> docs/figures/rim_charge_screen.png (§11)
 python3 scripts/meanaval_rim.py results/extraction_charging/meanaval_sigma0   # §12 table
+python3 scripts/meanaval_validate.py 0.5 <weighted_run> <micro_run> [...]     # §12 microscopic check
 ```
 
 Diagnostics used by this investigation (in `src/thgem_sim.cc`):
