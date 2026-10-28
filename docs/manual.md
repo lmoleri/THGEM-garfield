@@ -422,7 +422,8 @@ collect-only runs), `mc_weighted_paths` with `mc_step_um` and `mc_ion_samples` (
 paths: the uncapped mean avalanche at the cost of one drift line, the way to reach gains of ~10⁵ on the
 exact field), `fields.use_raw_nebem` (transport on the exact neBEM field instead of the sampled grid;
 slow), `fields.dump_raw_field`, `source.release_z_cm` / `release_r_max_cm` (release at a fixed z, over a
-disk about the hole axis).
+disk about the hole axis), `fields.charging_up` (neBEM charging-up: deposited charge read from
+`neBEMInp/neBEMChargingUp.inp` in the working directory, raw-field runs only).
 
 **`amplifier`** — `enable`, `gain_db`, `input_impedance_ohm`, `bandwidth_high_hz` (upper −3 dB →
 low-pass $\tau$), `output_sample_ns` (boxcar aperture). CIVIDEC C2-TCT datasheet defaults.

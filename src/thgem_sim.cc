@@ -208,6 +208,13 @@ struct FieldConfig {
   // 0 → uncharged dielectric (default, exact baseline).  Units: Garfield native surface
   // charge density (calibrate the physical scale via a field dump; negative = electrons).
   double dielSurfaceCharge = 0.0;
+  // Charging-up study: switch on neBEM's built-in charging-up (SetChargingUpOptions(1)).  neBEM
+  // then reads neBEMInp/neBEMChargingUp.inp in the working directory — electron/ion endpoint
+  // files whose last segments are mapped onto the dielectric elements as free surface charge,
+  // solved with the full conductor/dielectric response (copper and anode images, FR4
+  // polarisation).  Raw-field runs only, and the uncharged grid/weighting caches must already
+  // exist: a charged solve must never be sampled into a cache keyed by the uncharged geometry.
+  bool   chargingUp     = false;
 };
 
 struct SourceConfig {
@@ -624,6 +631,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.fields.deltaVThgemV   = ReadDouble(*f, "fields", "delta_v_thgem_V",  cfg.fields.deltaVThgemV);
     cfg.fields.eInductionKvcm = ReadDouble(*f, "fields", "e_induction_kvcm", cfg.fields.eInductionKvcm);
     cfg.fields.dumpRawField   = ReadBool  (*f, "fields", "dump_raw_field",   cfg.fields.dumpRawField);
+    cfg.fields.chargingUp     = ReadBool  (*f, "fields", "charging_up",      cfg.fields.chargingUp);
     cfg.fields.useRawNebem    = ReadBool  (*f, "fields", "use_raw_nebem",    cfg.fields.useRawNebem);
     cfg.fields.inpaintConductors = ReadBool(*f, "fields", "inpaint_conductors", cfg.fields.inpaintConductors);
     cfg.fields.dielSurfaceCharge = ReadDouble(*f, "fields", "dielectric_surface_charge", cfg.fields.dielSurfaceCharge);
@@ -2615,6 +2623,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"delta_v_thgem_V",  cfg.fields.deltaVThgemV},
       {"e_induction_kvcm", cfg.fields.eInductionKvcm},
       {"dump_raw_field",   cfg.fields.dumpRawField},
+      {"charging_up",      cfg.fields.chargingUp},
       {"use_raw_nebem",    cfg.fields.useRawNebem},
       {"inpaint_conductors", cfg.fields.inpaintConductors},
       {"dielectric_surface_charge", cfg.fields.dielSurfaceCharge}
@@ -2865,6 +2874,20 @@ int main(int argc, char* argv[]) {
         std::cout << "Loaded cached electrode weighting fields (anode, THGEM top, bottom).\n";
     }
 
+    // Charging-up acts on the raw neBEM solve only.  Requiring the uncharged caches means the
+    // cache-miss solve below never runs, so a charged field cannot be sampled into them.
+    if (cfg.fields.chargingUp) {
+      if (!haveField || !haveAllW)
+        throw std::runtime_error("fields.charging_up needs the uncharged transport and weighting "
+                                 "caches for this geometry (run once without it first).");
+      if (!cfg.fields.useRawNebem && !cfg.fields.dumpRawField)
+        throw std::runtime_error("fields.charging_up acts only on the raw neBEM field "
+                                 "(use_raw_nebem or dump_raw_field).");
+      detector.Component().SetChargingUpOptions(1);
+      std::cout << "  [charging_up] neBEM charging-up on (reads neBEMInp/neBEMChargingUp.inp in "
+                << fs::current_path() << ").\n";
+    }
+
     // A single neBEM solve serves the transport field and all three weighting fields,
     // so initialise if *any* is missing.  (On a pure cache hit neBEM is never
     // initialised, which is why each weighting field needs its own cache.)
@@ -2948,7 +2971,7 @@ int main(int argc, char* argv[]) {
       const fs::path csv = runDir / "raw_vs_grid_field.csv";
       std::ofstream out(csv.string());
       out << std::setprecision(6)
-          << "x_cm,z_cm,in_gas,ex_raw,ez_raw,emag_raw,ex_grid,ez_grid,emag_grid\n";
+          << "x_cm,z_cm,in_gas,ex_raw,ez_raw,emag_raw,ex_grid,ez_grid,emag_grid,v_raw\n";
       auto& nebem = detector.Component();
       // Cover the hole exit + full induction gap down to the anode, so electron drift lines
       // can be traced to termination (field-line extraction screen).  x spans axis → past the
@@ -2965,7 +2988,7 @@ int main(int argc, char* argv[]) {
           grid.ElectricField(x, 0., z, exG, eyG, ezG, vG, mG, sG);
           out << x << ',' << z << ',' << (detector.InGas(x,0.,z) ? 1 : 0) << ','
               << exR << ',' << ezR << ',' << std::hypot(exR,ezR) << ','
-              << exG << ',' << ezG << ',' << std::hypot(exG,ezG) << '\n';
+              << exG << ',' << ezG << ',' << std::hypot(exG,ezG) << ',' << vR << '\n';
         }
       }
       std::cout << "[dump_raw_field] wrote " << csv << "\n";

@@ -437,7 +437,54 @@ deposit → re-solve → re-transport until the net rim deposition vanishes give
 equilibrium per gap. Planned order: first the corner-rounding test, then this equilibrium on the
 surviving geometry.
 
-## 13. Mechanisms tested and excluded
+## 13. Are avalanche ions collected on the anode at small gaps?
+
+**Hypothesis.** Positive ions physically landing on the anode would cancel part of the electron
+charge it collects and lower the numerator, if it happened preferentially at small gaps.
+
+**Without charging, no.** The anode (0 V) is the most positive electrode and positive ions only move
+toward lower potential. Of 3000 weight-sampled ion births per gap from the §12 mean avalanche, **none**
+field-line onto the anode at any gap. The hole exit sits 200–470 V *below* the anode (table below), so
+the ions are pulled up into the hole.
+
+**With a charged rim.** A positive bottom-rim charge raises the local potential. At fixed E_ind the
+bottom copper is only −E_ind·d below the anode (−20 V at 0.1 mm, −200 V at 1.0 mm), so a free-space
+estimate (tens of volts per nC/cm²) suggested the exit could rise above the anode at small gaps. The
+anode is then only 0.1 mm away, so its image charge must be included. The field is therefore computed with
+**neBEM's charging-up** (`fields.charging_up`): `scripts/rim_charge_files.py` writes 6000 synthetic ion
+deposits spread uniformly over the bottom rim as charging-up endpoint lines. neBEM maps every one onto a
+dielectric element (checked in `PtIChUpMap.out`) and solves with the copper and anode images and the FR4
+polarisation.
+- **Linear superposition:** the problem is linear, so one solve per gap at +1 nC/cm² gives
+  E(σ) = E₀ + σ·(E₁ − E₀). Doubling the charge doubles the change, to 10⁻⁵.
+- **Potential offset:** neBEM adds a uniform, field-free potential offset for the net charge, so only
+  potential differences are used.
+- **Ion tracing:** `scripts/rim_ions_to_anode.py` traces the §12 ion births on E(σ).
+
+| induction gap [mm] | 0.1 | 0.2 | 0.5 | 1.0 |
+|---|---|---|---|---|
+| rim recess − anode potential, σ = 0 | −203 V | −263 V | −365 V | −474 V |
+| rise per +1 nC/cm² (relative to the anode) | **+1.4 V** | +4.7 V | +23 V | +66 V |
+| ions on the anode, σ = 2.7 nC/cm² (SINP scale) | 0 | 0 | 0 | 0 |
+| ions on the anode, σ = 20 nC/cm² | 0 | 0 | 0 | 0.2 % |
+| ions on the anode, σ = 50 nC/cm² | **0** | **0** | 8 % | 26 % |
+| ions on the bottom rim, σ = 0 → 50 nC/cm² | 2.1 → 0.3 % | 6.7 → 2.1 % | 22 → 1.5 % | 23 → 0 % |
+
+**Verdict: excluded, and the gap dependence runs the wrong way.** At small gaps the nearby anode (plus
+the copper 35 µm from the rim) **screens** the rim charge almost completely, at only +1.4 V per nC/cm²
+at 0.1 mm. Lifting the exit above the anode would take ~150 nC/cm², about 50× the SINP-scale charge;
+even at 50 nC/cm² no ion reaches the anode at 0.1 or 0.2 mm. Ions can be pushed onto the anode only at
+**large** gaps, and only for charges ≳ 20–50 nC/cm², the opposite of the measured small-gap
+suppression.
+
+The scan also shows the **self-limiting feedback** the equilibrium calculation needs: a positive rim
+repels further ions (the rim's ion share falls with σ at every gap).
+
+Caveats: ion births are taken from the uncharged avalanche, the test charge is uniform rather than the
+equilibrium pattern, and ion diffusion (~100× below the electrons') is neglected. None of these can
+bridge a ~50× gap at 0.1 mm.
+
+## 14. Mechanisms tested and excluded
 
 | # | Mechanism | How tested | Verdict |
 |---|---|---|---|
@@ -449,9 +496,10 @@ surviving geometry.
 | 6 | Copper-edge rounding / conductor in-painting (§7) | `edge_round_um`, `inpaint_conductors` | Do not fix the grid (sub-cell field rotation); kept opt-in, off by default |
 | 7 | **Bottom-rim dielectric charging-up (§10–12)** | field-line screen; mean-avalanche deposition at σ = 0 | **Leading candidate** — the rim charges *positive* at every gap (§12), and a positive rim suppresses extraction. The equilibrium σ(gap) is still open (neBEM charging-up, §12) |
 | 8 | Local-field approximation overstating the corner gain (§12) | weighted mean avalanche vs microscopic, primaries released at the hole exit | Ruled out within errors: microscopic gives the same corner loss and 1.5–2× *more* gain |
+| 9 | Avalanche ions collected on the anode at small gaps (§13) | ion field lines at σ = 0, then on neBEM charged-rim fields (images included) for σ up to 50 nC/cm² | Ruled out: none at σ = 0; the anode screens the rim charge at small gaps, so ions reach it only at gaps ≥ 0.5 mm for σ ≳ 20–50 nC/cm², the opposite trend |
 | — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through avalanches wrapping the sharp bottom-copper corner; next test: corner rounding, then the charging equilibrium |
 
-## 14. Reproducing
+## 15. Reproducing
 
 Simulation outputs live under `results/` (gitignored):
 
@@ -466,7 +514,9 @@ Simulation outputs live under `results/` (gitignored):
   `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen and the
   ion tracer (`dump_ig0p1` … `dump_ig1p0`), the σ = 0 mean-avalanche runs (`meanaval_sigma0/`, §12) and
   the weighted-vs-microscopic checks (`corner_test_z190/`, `exit_test_z150/`, each with its
-  `comparison.txt`).
+  `comparison.txt`), and the charged-rim fields of §13 (`rimcharge_unit/`: uncharged and +1 nC/cm²
+  slices per gap, the +2 nC/cm² linearity run, the neBEM charging-up inputs and element maps, and
+  `ions_vs_rim_charge.csv`).
 
 Figures in this note regenerate from those outputs via:
 
@@ -481,7 +531,14 @@ python3 scripts/screen_rim_charge.py   <dump_dir> <σ…>   # field-line screen 
 python3 scripts/plot_rim_charge_screen.py <dump_dir>     # -> docs/figures/rim_charge_screen.png (§11)
 python3 scripts/meanaval_rim.py results/extraction_charging/meanaval_sigma0   # §12 table
 python3 scripts/meanaval_validate.py 0.5 <weighted_run> <micro_run> [...]     # §12 microscopic check
+python3 scripts/rim_charge_files.py <run_config.json> <workdir> <σ C/cm²>      # §13 charging-up input
+python3 scripts/rim_ions_to_anode.py results/extraction_charging/rimcharge_unit # §13 table
 ```
+
+The §13 charged fields are field-only runs (`n_events` = 0, `dump_raw_field`, `use_raw_nebem`) with
+`fields.charging_up` = true, launched from a working directory that holds the `neBEMInp/` written by
+`rim_charge_files.py`, with `gas/` and `field_cache/` symlinked to the project's. Run them one at a time:
+neBEM writes fixed `/tmp` scratch files.
 
 Diagnostics used by this investigation (in `src/thgem_sim.cc`):
 
@@ -498,7 +555,11 @@ Diagnostics used by this investigation (in `src/thgem_sim.cc`):
   drift medium).
 - `fields.dump_raw_field` — dump the exact vs grid field to `raw_vs_grid_field.csv`. The slice now
   spans the hole exit → full induction gap (anode⁺ … −100 µm, axis → past the rim) so the charge
-  screen can trace drift lines to the anode (commit `81f773c`, region extended for §11).
+  screen can trace drift lines to the anode (commit `81f773c`, region extended for §11). It also
+  carries the exact potential `v_raw` (neBEM's absolute offset is arbitrary; use differences).
+- `fields.charging_up` — neBEM's built-in charging-up: reads `neBEMInp/neBEMChargingUp.inp` in the
+  working directory and solves with the deposited charge on the dielectric elements (§13). Raw-field
+  runs only; it refuses to run unless the uncharged caches exist, so a charged field is never cached.
 - `source.release_z_cm` — release a drift-only electron at an absolute z (e.g. on the hole wall) for
   the wall-release test (commit `81f773c`).
 - `simulation.dump_collection` — per-electron birth/endpoint/fate dump for the recapture map (§9).
