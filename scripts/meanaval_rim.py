@@ -64,7 +64,7 @@ def load_field(d):
     nCorner = 4 * (g.get("hole_sectors", 4) - 1)
     return dict(EX=grid(ex), EZ=grid(ez), GAS=grid(gas), xs=xs, zs=zs,
                 rCuIn=rCu * np.cos(np.pi / nCorner), zDH=zDH, rimBand=rimBand,
-                zBC=-(zDH + tCu), zTop=zDH + tCu)
+                zBC=-(zDH + tCu), zTop=zDH + tCu, zA=-(zDH + tCu) - g["induction_gap_mm"] * 0.1)
 
 
 def bil(F, M, x, z):
@@ -89,13 +89,16 @@ def classify(F, r, z):   # mirrors categorizeSurface in src/thgem_sim.cc
 
 
 def trace_ion(F, r, z, step=2e-4):   # +E field line (ions follow +E), diffusion neglected
+    """The slice starts one row (5 um) above the anode plane zA; below that first row the field is
+    taken from it, and an ion counts as 'anode' only if it actually travels down to zA."""
     for _ in range(12000):
-        ex = bil(F, F["EX"], r, z); ez = bil(F, F["EZ"], r, z)
+        zq = max(z, F["zs"][0])
+        ex = bil(F, F["EX"], r, zq); ez = bil(F, F["EZ"], r, zq)
         if np.isnan(ex) or np.hypot(ex, ez) < 1e-9: return "stuck"
         n = np.hypot(ex, ez); r += ex / n * step; z += ez / n * step
-        if z <= F["zs"][0] + step: return "anode"
+        if z <= F["zA"]: return "anode"
         if z >= F["zs"][-1] - step: return "drift"
-        gg = bil(F, F["GAS"], r, z)
+        gg = bil(F, F["GAS"], r, max(z, F["zs"][0]))
         if not np.isnan(gg) and gg < 0.5: return classify(F, abs(r), z)
     return "stuck"
 
@@ -105,7 +108,6 @@ def ion_dest(F, r0, z0):
     (z <= -100 um): an ion born higher sits in the upward hole field and drifts out of the
     top, so it can never reach the bottom rim — it counts as 'drift', not as missing."""
     if z0 > F["zs"][-1]: return "drift"
-    if z0 < F["zs"][0]: return "anode"
     if r0 > F["xs"][-1]: return "outside"
     return trace_ion(F, r0, z0)
 

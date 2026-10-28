@@ -1430,8 +1430,11 @@ void SetupSensor(Sensor& sensor, ComponentGrid& grid,
   // fates) instead of a clean collection.  AvalancheMicroscopic stops an electron
   // when a step lands outside the area (StatusLeftDriftArea); raising zmin a cell
   // makes the anode (and, symmetrically, the drift cathode) absorb on contact.
+  // The raw neBEM field has no such weak cell, so it transports right down to the anode:
+  // at small induction gaps the avalanche head grows in the gap, and the inset would cut its
+  // last cell (~12 µm, the highest-field part under the hole at 0.1 mm).
   const double xy      = 3.0 * g.pitchCm;
-  const double zMargin = (g.zDrift - g.zAnode) / std::max(1, gridNz - 1);
+  const double zMargin = rawField ? 0. : (g.zDrift - g.zAnode) / std::max(1, gridNz - 1);
   sensor.SetArea(-xy, -xy, g.zAnode + zMargin, xy, xy, g.zDrift - zMargin);
 }
 

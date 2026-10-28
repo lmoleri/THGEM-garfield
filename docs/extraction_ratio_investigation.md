@@ -136,6 +136,12 @@ at the hole exit. It is compared to E_ind = 2 kV/cm. (The avalanche's lateral RM
 The planned Stage 2 (injecting the self-field into the solver) was skipped: adding a ~1 % field
 changes nothing.
 
+**Revisited (§13a).** This estimate used a capped avalanche, whose charge sits mid-hole, and reason 2
+does not hold for the real one: at small gaps the uncapped avalanche grows its head *in the gap*, half
+of its ions within 50 µm of the anode at 0.1 mm. With that geometry, the space charge would push ions
+onto the anode above **3–10 pC per event**. The measured charge (< 100 fC per event) keeps the verdict:
+ruled out.
+
 ## 5. The denominator (ion collection) — ruled out
 
 Both static studies addressed the **numerator** (anode extraction), while the measurement's own
@@ -369,16 +375,18 @@ intervals (`scripts/meanaval_rim.py`).
 | 3 | Surface classifier | time-window electrons counted as deposited; copper tested against the circle, not the 12-gon inradius (copper-flat hits tallied as rim); hits a hair below the copper face tallied as anode | unresolved category; inradius rCu·cos(π/12); 1 µm tolerance |
 | 4 | Raw-neBEM field at a point ~10⁻⁸ cm from a panel (a path's terminal point) is singular | α extrapolated far beyond the table, one path's G ≈ 360 | terminal point reuses the previous rates; \|E\| for α/η clamped at the table maximum |
 
-**Result at σ = 0** (2 × 500 paths per gap):
+**Result at σ = 0** (2 × 500 paths per gap; on the raw field the transport now runs down to the
+anode plane, see §13a — the 0.1/0.2 mm runs were redone with it, the earlier ones are kept in
+`meanaval_sigma0_inset/`):
 
 | induction gap [mm] | 0.1 | 0.2 | 0.5 | 1.0 |
 |---|---|---|---|---|
 | measurement | 0.51 | 0.64 | 0.855 | 0.80 |
-| sim extraction (anode/total) | 0.979 [0.976, 0.982] | 0.886 [0.859, 0.912] | 0.62 [0.55, 0.72] | 0.37 [0.32, 0.45] |
-| electrons → bottom copper | 0.002 | 0.05 | 0.29 | 0.51 |
-| ions → bottom rim (per aval. e⁻) | 0.023 | 0.065 | 0.23 | 0.22 |
-| electrons → bottom rim | 0.004 | 0.008 | 0.010 | 0.041 |
-| **net rim charge** (ions − e⁻) | **+0.019** [0.011, 0.026] | **+0.056** [0.030, 0.082] | **+0.22** [0.12, 0.30] | **+0.18** [0.08, 0.26] |
+| sim extraction (anode/total) | 0.977 [0.971, 0.984] | 0.859 [0.817, 0.903] | 0.62 [0.55, 0.72] | 0.37 [0.32, 0.45] |
+| electrons → bottom copper | 0.006 | 0.077 | 0.29 | 0.51 |
+| ions → bottom rim (per aval. e⁻) | 0.021 | 0.096 | 0.23 | 0.22 |
+| electrons → bottom rim | 0.001 | 0.013 | 0.010 | 0.041 |
+| **net rim charge** (ions − e⁻) | **+0.020** [0.011, 0.030] | **+0.083** [0.036, 0.123] | **+0.22** [0.12, 0.30] | **+0.18** [0.08, 0.26] |
 
 1. **The rim charges positive at every gap**, ion-dominated, the sign of the SINP self-consistent
    simulations (§10) and the sign that suppresses extraction (§11).
@@ -467,15 +475,15 @@ polarisation.
 | rise per +1 nC/cm² (relative to the anode) | **+1.4 V** | +4.7 V | +23 V | +66 V |
 | ions on the anode, σ = 2.7 nC/cm² (SINP scale) | 0 | 0 | 0 | 0 |
 | ions on the anode, σ = 20 nC/cm² | 0 | 0 | 0 | 0.2 % |
-| ions on the anode, σ = 50 nC/cm² | **0** | **0** | 8 % | 26 % |
-| ions on the bottom rim, σ = 0 → 50 nC/cm² | 2.1 → 0.3 % | 6.7 → 2.1 % | 22 → 1.5 % | 23 → 0 % |
+| ions on the anode, σ = 50 nC/cm² | **0.07 %** | **0** | 8 % | 26 % |
+| ions on the bottom rim, σ = 0 → 50 nC/cm² | 2.3 → 0.07 % | 8.9 → 2.5 % | 22 → 1.5 % | 23 → 0 % |
 
 **Verdict: excluded, and the gap dependence runs the wrong way.** At small gaps the nearby anode (plus
 the copper 35 µm from the rim) **screens** the rim charge almost completely, at only +1.4 V per nC/cm²
 at 0.1 mm. Lifting the exit above the anode would take ~150 nC/cm², about 50× the SINP-scale charge;
-even at 50 nC/cm² no ion reaches the anode at 0.1 or 0.2 mm. Ions can be pushed onto the anode only at
-**large** gaps, and only for charges ≳ 20–50 nC/cm², the opposite of the measured small-gap
-suppression.
+even at 50 nC/cm² essentially no ion reaches the anode at 0.1 or 0.2 mm. Ions can be pushed onto the
+anode only at **large** gaps, and only for charges ≳ 20–50 nC/cm², the opposite of the measured
+small-gap suppression.
 
 The scan also shows the **self-limiting feedback** the equilibrium calculation needs: a positive rim
 repels further ions (the rim's ion share falls with σ at every gap).
@@ -483,6 +491,54 @@ repels further ions (the rim's ion share falls with σ at every gap).
 Caveats: ion births are taken from the uncharged avalanche, the test charge is uniform rather than the
 equilibrium pattern, and ion diffusion (~100× below the electrons') is neglected. None of these can
 bridge a ~50× gap at 0.1 mm.
+
+### 13a. The avalanche head grows in the gap
+
+At small gaps the hole's field leaks straight through to the anode: under the hole the gap field is
+19.6 kV/cm at 0.1 mm (15.3 at 0.2 mm), not the nominal 2 kV/cm. The gap therefore multiplies, and the
+**avalanche head sits on the anode**:
+
+| induction gap [mm] | 0.1 | 0.2 | 0.5 | 1.0 |
+|---|---|---|---|---|
+| ions born in the gap | **83 %** | 69 % | 65 % | 63 % |
+| … within 50 µm of the anode | **48 %** | 4.7 % | 0 | 0 |
+| … within 12 µm of the anode | 16 % | 0.8 % | 0 | 0 |
+| field under the hole, gap middle | 19.6 kV/cm | 15.3 kV/cm | 7.9 kV/cm | 3.7 kV/cm |
+
+Two consequences were checked:
+
+1. **The last 12 µm had been cut.** The drift area was inset by one transport-grid cell above the
+   anode (an anode-slide fix for the uniform grid) also on the raw field, which needs no such fix.
+   Raw-field transport now runs to the anode plane (`SetupSensor`). At 0.1 mm that adds the 16 % of
+   ions born in the last 12 µm; the extraction and net rim charge change within their errors (§12).
+2. **Ions born at the anode still leave it.** The anode is the most positive electrode, so the field
+   at its surface points away from it everywhere; of 338 sampled ions born in the last 12 µm at 0.1 mm,
+   all drift up into the hole (one lands on the rim). Thermal diffusion lets an ion climb only
+   kT/e = 25 mV, about 14 nm against 18 kV/cm.
+
+**Space charge of the head.** The one way ions could physically be pushed onto the anode is the ion
+cloud's own field: below a positive cloud it points down, and the anode's image doubles it.
+`scripts/gap_ion_spacecharge.py` freezes the cloud at the σ = 0 ion births (all of an event's charge
+in one hole, the worst case), adds its Coulomb field and the anode-plane image to the exact field on
+the slice, and traces the ions:
+
+| event charge Q | 100 fC | 1 pC | 3 pC | 10 pC | 30 pC |
+|---|---|---|---|---|---|
+| ions on the anode, 0.1 mm | 0 | 0 | 0 | 32 % | 61 % |
+| ions on the anode, 0.2 mm | 0 | 0 | 0 | 9 % | 45 % |
+| ions on the anode, 0.5 mm | 0 | 0 | 0 | 0 | 9 % |
+| ions on the anode, 1.0 mm | 0 | 0 | 0 | 0 | 0.9 % |
+
+Space charge does favour small gaps, where the cloud sits on the anode, but the threshold is
+**3–10 pC per event**. The measured charge is **below ~100 fC per 5.9 keV event**, at least 30× short,
+so this route is excluded too (the frozen cloud overstates it: the real one expands as it drifts).
+
+**Open item: the simulated gain is too high.** The weighted mean avalanche gives ~10⁵ per primary
+(microscopic transport even more, §12), i.e. ~4 pC per event (227 primaries), against < 100 fC
+measured: a ≥ 30× mismatch. Candidates: the hole field (ΔV definition, real hole and rim dimensions),
+the Penning transfer probability (r = 0.57 assumed), attachment to impurities (O₂, H₂O), or gain loss
+from charging-up in the real detector. It does not affect the electrostatic conclusions above, but it
+matters for absolute magnitudes and the avalanche shape.
 
 ## 14. Mechanisms tested and excluded
 
@@ -497,6 +553,7 @@ bridge a ~50× gap at 0.1 mm.
 | 7 | **Bottom-rim dielectric charging-up (§10–12)** | field-line screen; mean-avalanche deposition at σ = 0 | **Leading candidate** — the rim charges *positive* at every gap (§12), and a positive rim suppresses extraction. The equilibrium σ(gap) is still open (neBEM charging-up, §12) |
 | 8 | Local-field approximation overstating the corner gain (§12) | weighted mean avalanche vs microscopic, primaries released at the hole exit | Ruled out within errors: microscopic gives the same corner loss and 1.5–2× *more* gain |
 | 9 | Avalanche ions collected on the anode at small gaps (§13) | ion field lines at σ = 0, then on neBEM charged-rim fields (images included) for σ up to 50 nC/cm² | Ruled out: none at σ = 0; the anode screens the rim charge at small gaps, so ions reach it only at gaps ≥ 0.5 mm for σ ≳ 20–50 nC/cm², the opposite trend |
+| 10 | Ion space charge of the avalanche head in the gap (§13a; revisits §4) | head-in-gap ion cloud + anode image, ion field lines vs event charge | Ruled out: ions reach the anode only above 3–10 pC per event; measured < 100 fC |
 | — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through avalanches wrapping the sharp bottom-copper corner; next test: corner rounding, then the charging equilibrium |
 
 ## 15. Reproducing
@@ -516,7 +573,9 @@ Simulation outputs live under `results/` (gitignored):
   the weighted-vs-microscopic checks (`corner_test_z190/`, `exit_test_z150/`, each with its
   `comparison.txt`), and the charged-rim fields of §13 (`rimcharge_unit/`: uncharged and +1 nC/cm²
   slices per gap, the +2 nC/cm² linearity run, the neBEM charging-up inputs and element maps, and
-  `ions_vs_rim_charge.csv`).
+  `ions_vs_rim_charge.csv`),
+  and the 0.1/0.2 mm σ = 0 runs made before the transport reached the anode plane
+  (`meanaval_sigma0_inset/`, §13a).
 
 Figures in this note regenerate from those outputs via:
 
@@ -533,6 +592,7 @@ python3 scripts/meanaval_rim.py results/extraction_charging/meanaval_sigma0   # 
 python3 scripts/meanaval_validate.py 0.5 <weighted_run> <micro_run> [...]     # §12 microscopic check
 python3 scripts/rim_charge_files.py <run_config.json> <workdir> <σ C/cm²>      # §13 charging-up input
 python3 scripts/rim_ions_to_anode.py results/extraction_charging/rimcharge_unit # §13 table
+python3 scripts/gap_ion_spacecharge.py results/extraction_charging/meanaval_sigma0 [Q_fC …]   # §13a space charge
 ```
 
 The §13 charged fields are field-only runs (`n_events` = 0, `dump_raw_field`, `use_raw_nebem`) with
@@ -547,6 +607,7 @@ Diagnostics used by this investigation (in `src/thgem_sim.cc`):
   correct field at the thin copper edge. **Slow** with microscopic tracking. A small
   `simulation.max_avalanche_size` keeps it tractable but is *not* neutral: it tracks only the early,
   mid-hole electrons (§12). For uncapped avalanches use the mean-avalanche mode below (commit `81f773c`).
+  On this field the drift area reaches the anode plane (no one-cell inset, which only the grid needs; §13a).
 - `simulation.mc_electron_transport`, `mc_weighted_paths`, `mc_step_um`, `mc_ion_samples` — `AvalancheMC`
   electrons for collect-only runs, and the weighted mean-avalanche paths of §12 (dump gains a `weight`
   column and ion-birth rows, species `b`).
