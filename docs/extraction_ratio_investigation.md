@@ -1,13 +1,18 @@
 # Investigation: Anode/THGEM-top charge ratio vs induction gap
 
-**Status:** root cause of the simulated over-extraction **identified and fixed** — it was a
-*field-sampling artifact* of the uniform transport grid at the thin copper edge, not physics.
-On the exact (neBEM) transport field the simulation finally collects charge on the bottom
-copper and the extraction magnitude drops into the measured band. One feature of the
-measurement — the **suppression of the ratio at small induction gaps** — has no counterpart in
-the idealized electrostatic + microscopic model; the **leading candidate is bottom-rim
-dielectric charging-up** (§10–11), which a field-line screen shows moves extraction the right
-way for the measured sign, magnitude and E_ind-independence, with the gap-dependence still open.
+**Status:** compared as **collected charge against collected charge** (§14), the simulation now
+matches the measurement at large induction gaps and disagrees only at small ones. Two corrections
+got it there:
+1. The THGEM-top collects only ~41–47 % of the avalanche ions; the rest backflow to the drift
+   cathode or land on the dielectric. The earlier comparisons used the electron extraction fraction,
+   which silently assumed the top collects all of them.
+2. Earlier, a field-sampling artifact of the uniform transport grid at the thin copper edge (§7) had
+   corrupted the simulated extraction.
+
+What remains is a **small-gap excess**: the simulated ratio is 4.2× the measured at 0.1 mm, 2.7× at
+0.2 mm, 1.4× at 0.5 mm and 1.25× at 1.0 mm. Ions reaching the anode (§13), avalanche space charge
+(§13a) and a local-field transport artifact (§12) are excluded. The next test is a bench calibration
+of the anode charge amplifier at each gap: its input capacitance grows as 1/gap.
 
 This note records the full investigation into reproducing, in the Garfield++ THGEM simulation,
 a lab measurement of the **Anode/THGEM-top charge ratio as a function of the induction gap**.
@@ -50,6 +55,10 @@ frac_anode = (electrons collected on the anode) / (total electrons produced in t
 classified from the avalanche electron endpoints (anode / THGEM bottom copper / top copper /
 dielectric / attached), with no induced-signal weighting. At ΔV = 1.9 kV the ions are not drifted
 (electrons only), consistent with a collection-fraction observable.
+
+**Correction (§14).** Read as collected charges, the measured ratio is N_e(anode) / N_ion(THGEM-top),
+and it equals frac_anode only if the top copper collects every avalanche ion. Followed in 3D, only
+~41–47 % do, at every gap. §3–§12 compare frac_anode; §14 compares the collected-charge ratio.
 
 ## 3. Study 1 — static extraction geometry (hole rim + transport grid)
 
@@ -163,6 +172,11 @@ number that must come from a genuinely low *numerator*, not a large denominator.
 confirmed the bottom electrode collects **electrons** (it shows signal on a charge-sensitive
 amplifier), not a drifting ion cloud, so simulating ion collection on the bottom does not address the
 discrepancy. The denominator is not the cause.
+
+**Quantified (§14).** f_top is 0.41–0.47 at every gap, far below 1, so the simulated ratio sits well
+above ε. That resolves the large-gap comparison, where ε alone looked too low. The bound itself stands:
+at 0.1 mm, ε = 0.98 puts the simulated ratio above 0.98 whatever f_top is, so the small-gap shortfall
+must come from the numerator side (anode charge), as concluded here.
 
 ## 6. Electron attachment — ruled out
 
@@ -540,7 +554,63 @@ the Penning transfer probability (r = 0.57 assumed), attachment to impurities (O
 from charging-up in the real detector. It does not affect the electrostatic conclusions above, but it
 matters for absolute magnitudes and the avalanche shape.
 
-## 14. Mechanisms tested and excluded
+## 14. The collected-charge ratio
+
+The measured values are collected charges, so the simulated quantity to compare is
+
+```
+R = N_e(anode) / N_ion(THGEM-top copper)
+```
+
+not the extraction fraction. The ion side needs every ion followed to the electrode or surface that
+collects it, in 3D. A 2D slice isn't enough: ions leave the hole mouth and fan out above the top
+copper, landing on it out to r ≈ 470–660 µm from the hole axis. They can only do so where their
+potential is above the copper's; 91 % of those leaving a 450 µm slice sideways still were.
+
+**Method.** The σ = 0 weighted mean avalanche of §12 was re-run with `enable_ion_drift`. Each sampled
+ion birth (6 per path) is drifted by `AvalancheMC` on the exact neBEM field: 5 µm steps, with ion
+diffusion, real surfaces and the periodic medium fold. The landing surface is written with the
+birth's weight (species `i`). Ions stopped on the top copper's upper face from above are tallied as
+top copper (1 µm tolerance, as for the anode side). 2 × 500 paths per gap, ~1.5–2 h on 8 cores.
+`scripts/collected_ratio.py` gives R with bootstrap intervals over paths.
+
+| induction gap [mm] | 0.1 | 0.2 | 0.5 | 1.0 |
+|---|---|---|---|---|
+| electrons on the anode (extraction ε) | 0.98 | 0.80 | 0.47 | 0.42 |
+| electrons on the bottom copper | 0.00 | 0.15 | 0.45 | 0.52 |
+| ions on the THGEM-top copper | **0.47** | **0.47** | **0.41** | **0.43** |
+| ions to the drift cathode (backflow) | 0.34 | 0.31 | 0.19 | 0.23 |
+| ions on the bottom rim | 0.07 | 0.18 | 0.37 | 0.33 |
+| ions on top rim + hole wall | 0.12 | 0.05 | 0.03 | 0.02 |
+| **R_sim** | **2.17** [1.86, 2.64] | **1.75** [1.60, 1.94] | **1.18** [1.06, 1.32] | **1.00** [0.92, 1.11] |
+| measured | 0.51 | 0.64 | 0.855 | 0.80 |
+| R_sim / measured | 4.2 | 2.7 | 1.4 | 1.25 |
+
+Ion fates sum to 1 and there are 0.97 ions per avalanche electron (the rest are primary-electron
+paths). Extraction values differ from §12's by up to ~0.15 at 0.5/1.0 mm: this is an independent
+sample of the same heavy-tailed weights.
+
+1. **Large gaps now agree within ~25 %.** Their earlier "simulation far too low" (§12) was an artifact
+   of comparing against ε: only 41–47 % of ions reach the top copper, so R ≈ 2.3 ε. About a fifth to a
+   third of the ions backflow to the drift cathode, and a third land on the bottom rim at ≥ 0.5 mm.
+2. **The discrepancy is a small-gap excess** that grows steadily as the gap shrinks, to 4× at 0.1 mm.
+   There the simulated anode collects essentially every electron (ε = 0.98), so by §5's bound
+   R_sim ≥ 0.98 whatever the top collects. The measured 0.51 needs the anode's collected charge to be
+   about 4× lower relative to the top's than simulated.
+3. **The prime candidate is the measurement of the anode charge itself.** The anode–THGEM-bottom
+   capacitance scales as area/gap (≈ 0.9 nF per 100 cm² at 0.1 mm), while the THGEM-top's does not
+   depend on the gap. A charge amplifier's charge gain falls as 1/(1 + C_det / (A·C_f)). Calibrated
+   at 0.1 mm, that predicts excesses of 3.6 / 2.3 / 1.3 at 0.2 / 0.5 / 1.0 mm, against 2.7 / 1.4 / 1.25
+   here: the same shape, a little shallower than observed. **Decisive test:** inject a known charge
+   into the anode channel at each gap (and into the THGEM-top channel), through the same chain.
+4. **Physics candidates that would also lower the small-gap numerator** are not excluded yet:
+   - the real geometry, gain and rim (the simulated gain is ≥ 30× too high, §13a);
+   - charging-up of the real detector (§10–11).
+
+   Both would have to remove about three quarters of the anode electrons at 0.1 mm while barely
+   touching 1.0 mm.
+
+## 15. Mechanisms tested and excluded
 
 | # | Mechanism | How tested | Verdict |
 |---|---|---|---|
@@ -554,9 +624,10 @@ matters for absolute magnitudes and the avalanche shape.
 | 8 | Local-field approximation overstating the corner gain (§12) | weighted mean avalanche vs microscopic, primaries released at the hole exit | Ruled out within errors: microscopic gives the same corner loss and 1.5–2× *more* gain |
 | 9 | Avalanche ions collected on the anode at small gaps (§13) | ion field lines at σ = 0, then on neBEM charged-rim fields (images included) for σ up to 50 nC/cm² | Ruled out: none at σ = 0; the anode screens the rim charge at small gaps, so ions reach it only at gaps ≥ 0.5 mm for σ ≳ 20–50 nC/cm², the opposite trend |
 | 10 | Ion space charge of the avalanche head in the gap (§13a; revisits §4) | head-in-gap ion cloud + anode image, ion field lines vs event charge | Ruled out: ions reach the anode only above 3–10 pC per event; measured < 100 fC |
-| — | Measured rise at small induction gaps (§8) | exact-field sweep; uncapped mean avalanche (§12) | **Open** — at σ = 0 the extraction *falls* with gap through avalanches wrapping the sharp bottom-copper corner; next test: corner rounding, then the charging equilibrium |
+| 11 | Comparing against the extraction fraction (§2 observable) | ions followed in 3D to their collecting electrode (§14) | **Corrected:** the THGEM-top collects only 41–47 % of the ions, so the collected-charge ratio is ≈ 2.3× the extraction fraction; large gaps now agree within ~25 % |
+| — | Small-gap excess of the collected-charge ratio (§14) | uncapped mean avalanche + 3D ion drift on the exact field | **Open** — simulated / measured = 4.2, 2.7, 1.4, 1.25 at 0.1, 0.2, 0.5, 1.0 mm; next test: anode charge-amplifier calibration vs gap (input capacitance ∝ 1/gap), then real geometry/gain |
 
-## 15. Reproducing
+## 16. Reproducing
 
 Simulation outputs live under `results/` (gitignored):
 
@@ -571,7 +642,9 @@ Simulation outputs live under `results/` (gitignored):
   `dump_raw_field` slices over the full hole-exit → induction gap used by the charge screen and the
   ion tracer (`dump_ig0p1` … `dump_ig1p0`), the σ = 0 mean-avalanche runs (`meanaval_sigma0/`, §12) and
   the weighted-vs-microscopic checks (`corner_test_z190/`, `exit_test_z150/`, each with its
-  `comparison.txt`), and the charged-rim fields of §13 (`rimcharge_unit/`: uncharged and +1 nC/cm²
+  `comparison.txt`), the full-height exact-field slices up to the drift cathode (`fullslice_ig*`), the
+  σ = 0 runs with 3D ion drift and the collected-charge table of §14 (`meanaval_sigma0_ions/`), and the
+  charged-rim fields of §13 (`rimcharge_unit/`: uncharged and +1 nC/cm²
   slices per gap, the +2 nC/cm² linearity run, the neBEM charging-up inputs and element maps, and
   `ions_vs_rim_charge.csv`),
   and the 0.1/0.2 mm σ = 0 runs made before the transport reached the anode plane
@@ -593,6 +666,7 @@ python3 scripts/meanaval_validate.py 0.5 <weighted_run> <micro_run> [...]     # 
 python3 scripts/rim_charge_files.py <run_config.json> <workdir> <σ C/cm²>      # §13 charging-up input
 python3 scripts/rim_ions_to_anode.py results/extraction_charging/rimcharge_unit # §13 table
 python3 scripts/gap_ion_spacecharge.py results/extraction_charging/meanaval_sigma0 [Q_fC …]   # §13a space charge
+python3 scripts/collected_ratio.py results/extraction_charging/meanaval_sigma0_ions          # §14 table
 ```
 
 The §13 charged fields are field-only runs (`n_events` = 0, `dump_raw_field`, `use_raw_nebem`) with
@@ -618,6 +692,7 @@ Diagnostics used by this investigation (in `src/thgem_sim.cc`):
   spans the hole exit → full induction gap (anode⁺ … −100 µm, axis → past the rim) so the charge
   screen can trace drift lines to the anode (commit `81f773c`, region extended for §11). It also
   carries the exact potential `v_raw` (neBEM's absolute offset is arbitrary; use differences).
+  `fields.dump_raw_zmax_cm` raises the slice top (default −100 µm) up to the drift cathode.
 - `fields.charging_up` — neBEM's built-in charging-up: reads `neBEMInp/neBEMChargingUp.inp` in the
   working directory and solves with the deposited charge on the dielectric elements (§13). Raw-field
   runs only; it refuses to run unless the uncharged caches exist, so a charged field is never cached.

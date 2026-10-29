@@ -94,6 +94,10 @@ def trace_ion(F, r, z, step=2e-4):   # +E field line (ions follow +E), diffusion
     for _ in range(12000):
         zq = max(z, F["zs"][0])
         ex = bil(F, F["EX"], r, zq); ez = bil(F, F["EZ"], r, zq)
+        if np.isnan(ex) and abs(r) > F["xs"][-1] and z > F["zTop"]:
+            # left the slice sideways above the plate: over the top copper the drift field points
+            # up (the cathode is the more negative electrode), so the ion drifts to the cathode
+            return "drift"
         if np.isnan(ex) or np.hypot(ex, ez) < 1e-9: return "stuck"
         n = np.hypot(ex, ez); r += ex / n * step; z += ez / n * step
         if z <= F["zA"]: return "anode"

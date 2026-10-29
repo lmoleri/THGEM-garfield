@@ -421,7 +421,7 @@ anode / THGEM bottom copper / top copper / attached — for electron-transparenc
 collect-only runs), `mc_weighted_paths` with `mc_step_um` and `mc_ion_samples` (weighted mean-avalanche
 paths: the uncapped mean avalanche at the cost of one drift line, the way to reach gains of ~10⁵ on the
 exact field), `fields.use_raw_nebem` (transport on the exact neBEM field instead of the sampled grid;
-slow), `fields.dump_raw_field`, `source.release_z_cm` / `release_r_max_cm` (release at a fixed z, over a
+slow), `fields.dump_raw_field` (with `dump_raw_zmax_cm` to extend the slice up to the drift cathode), `source.release_z_cm` / `release_r_max_cm` (release at a fixed z, over a
 disk about the hole axis), `fields.charging_up` (neBEM charging-up: deposited charge read from
 `neBEMInp/neBEMChargingUp.inp` in the working directory, raw-field runs only).
 

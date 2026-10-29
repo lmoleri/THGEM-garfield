@@ -215,6 +215,10 @@ struct FieldConfig {
   // polarisation).  Raw-field runs only, and the uncharged grid/weighting caches must already
   // exist: a charged solve must never be sampled into a cache keyed by the uncharged geometry.
   bool   chargingUp     = false;
+  // Upper z [cm] of the dump_raw_field slice.  The default stops in the lower hole (−100 µm),
+  // enough to trace electrons to the anode; raise it to just below the drift cathode to follow
+  // ions to the electrode that collects them (THGEM-top copper, top rim, drift cathode).
+  double dumpRawZmaxCm = -0.010;
 };
 
 struct SourceConfig {
@@ -632,6 +636,7 @@ Config LoadConfig(const fs::path& path) {
     cfg.fields.eInductionKvcm = ReadDouble(*f, "fields", "e_induction_kvcm", cfg.fields.eInductionKvcm);
     cfg.fields.dumpRawField   = ReadBool  (*f, "fields", "dump_raw_field",   cfg.fields.dumpRawField);
     cfg.fields.chargingUp     = ReadBool  (*f, "fields", "charging_up",      cfg.fields.chargingUp);
+    cfg.fields.dumpRawZmaxCm  = ReadDouble(*f, "fields", "dump_raw_zmax_cm", cfg.fields.dumpRawZmaxCm);
     cfg.fields.useRawNebem    = ReadBool  (*f, "fields", "use_raw_nebem",    cfg.fields.useRawNebem);
     cfg.fields.inpaintConductors = ReadBool(*f, "fields", "inpaint_conductors", cfg.fields.inpaintConductors);
     cfg.fields.dielSurfaceCharge = ReadDouble(*f, "fields", "dielectric_surface_charge", cfg.fields.dielSurfaceCharge);
@@ -1732,7 +1737,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     // Still drifting in the plate zone when the time window closed: not deposited anywhere
     // (an electron held in the rim recess, say) — unresolved, like one left in the drift gap.
     if (status == Garfield::StatusOutsideTimeWindow) return "drift";
-    if (ze > g.zTopCuTop)  return "drift";       // still in the drift gap (unresolved)
+    if (ze > g.zTopCuTop + 1.e-4) return "drift";   // in the drift gap, 1 µm clear of the top face
     if (ze >  g.zDielHalf) return "top_cu";      // stopped on the top copper
     if (ze < -g.zDielHalf) return "bottom_cu";   // stopped on the bottom copper
     return "dielectric";                         // stopped on the hole wall (dielectric)
@@ -1753,7 +1758,7 @@ DistanceSummary RunDistancePoint(const Config& cfg, const ThgemGeom& g,
     if (status == Garfield::StatusAttached) return "attached";
     const double re = radiusInCell(xe, ye);
     if (ze < g.zBotCuBot - 1.e-4) return "anode";   // 1 µm clear of the copper face (above)
-    if (ze > g.zTopCuTop) return "drift";
+    if (ze > g.zTopCuTop + 1.e-4) return "drift";   // 1 µm clear of the top copper face (below)
     if (status == Garfield::StatusOutsideTimeWindow) return "unresolved";   // not deposited
     if (re >= rCuInCm) {                           // at the copper opening
       if (ze < -g.zDielHalf) return "bottom_cu";
@@ -2627,6 +2632,7 @@ json ConfigToJson(const Config& cfg, const ThgemGeom& g) {
       {"e_induction_kvcm", cfg.fields.eInductionKvcm},
       {"dump_raw_field",   cfg.fields.dumpRawField},
       {"charging_up",      cfg.fields.chargingUp},
+      {"dump_raw_zmax_cm", cfg.fields.dumpRawZmaxCm},
       {"use_raw_nebem",    cfg.fields.useRawNebem},
       {"inpaint_conductors", cfg.fields.inpaintConductors},
       {"dielectric_surface_charge", cfg.fields.dielSurfaceCharge}
@@ -2982,7 +2988,8 @@ int main(int argc, char* argv[]) {
       const auto& gm = detector.Geom();
       const double step = 5.e-4;                                  // 5 µm
       const double x0 = 0.0, x1 = std::min(0.045, gm.pitchCm / 2. - step);
-      const double z0 = gm.zAnode + step, z1 = -0.010;           // anode⁺ … −100 µm
+      const double z0 = gm.zAnode + step;                         // anode⁺ …
+      const double z1 = std::min(cfg.fields.dumpRawZmaxCm, gm.zDrift - step);   // … −100 µm default
       for (double z = z0; z <= z1 + 1e-9; z += step) {
         for (double x = x0; x <= x1 + 1e-9; x += step) {
           double exR=0,eyR=0,ezR=0,vR=0; Garfield::Medium* mR=nullptr; int sR=0;
