@@ -59,6 +59,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "Garfield/AvalancheMC.hh"
@@ -553,6 +554,9 @@ struct CliOptions {
   // Drift single electrons with no multiplication and tally their collection fate
   // (anode / bottom Cu / top Cu / attached) — for transparency / collection studies.
   bool driftOnly = false;
+  bool glassExport = false;
+  bool glassPlanar = false;
+  fs::path glassReplay;
 };
 
 [[noreturn]] void PrintUsageAndExit(const char* prog, int code) {
@@ -568,6 +572,9 @@ struct CliOptions {
          "                     their collection fate (electron-transparency study).\n"
          "                     simulation.drift_only = true in the config does the same.\n"
          "  --help             Show this message\n";
+  out << "  --glass-export     Export charge-balanced, timed diagnostic snapshots.\n"
+         "  --glass-replay <file> Replay snapshots using glass_signal.model weighting geometry.\n"
+         "  --glass-planar     Solve the contacted-glass planar weighting benchmark.\n";
   std::exit(code);
 }
 
@@ -575,7 +582,14 @@ CliOptions ParseCli(int argc, char* argv[]) {
   CliOptions opts;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--config") {
+    if (arg == "--glass-export") {
+      opts.glassExport = true;
+    } else if (arg == "--glass-planar") {
+      opts.glassPlanar = true;
+    } else if (arg == "--glass-replay") {
+      if (i + 1 >= argc) PrintUsageAndExit(argv[0], 1);
+      opts.glassReplay = argv[++i];
+    } else if (arg == "--config") {
       if (i + 1 >= argc) PrintUsageAndExit(argv[0], 1);
       opts.configPath = argv[++i];
     } else if (arg == "--out") {
@@ -946,7 +960,8 @@ struct ThgemGeom {
 // Lives for the whole run (neBEM references the geometry during field lookups).
 class ThgemDetector {
  public:
-  ThgemDetector(const GeometryConfig& g, const FieldConfig& f, MediumMagboltz& gas) {
+  ThgemDetector(const GeometryConfig& g, const FieldConfig& f, MediumMagboltz& gas,
+                double glassCm = 0., double glassEps = 8., bool diagnosticReadout = false) {
     geom_ = ComputeGeom(g, f);
     diel_.SetDielectricConstant(geom_.epsDiel);
 
@@ -956,6 +971,7 @@ class ThgemDetector {
 
     // Drift cathode: fixed-potential plate one drift gap above the plate.
     auto drift = std::make_unique<SolidBox>(0., 0., geom_.zDrift, hx, hy, 0.);
+    if (diagnosticReadout) drift->SetLabel("drift");
     drift->SetBoundaryPotential(geom_.vDrift);
     geo_.AddSolid(drift.get(), &cu_);
     solids_.push_back(std::move(drift));
@@ -1040,7 +1056,17 @@ class ThgemDetector {
     // Anode readout plate one induction gap below the plate.  Labelled so neBEM
     // solves its true Shockley–Ramo weighting field (1 V here, 0 V on all others);
     // that field's potential drives the anode signal, like the two copper electrodes.
-    auto anode = std::make_unique<SolidBox>(0., 0., geom_.zAnode, hx, hy, 0.);
+    // Diagnostic weighting geometry only: the complete glass rear face is in
+    // ideal electrical contact with the conductor. No intervening layer or gap.
+    if (glassCm > 0.) {
+      glass_.SetDielectricConstant(glassEps);
+      auto slab = std::make_unique<SolidBox>(0., 0., geom_.zAnode - glassCm / 2.,
+                                            hx, hy, glassCm / 2.);
+      slab->SetBoundaryDielectric();
+      geo_.AddSolid(slab.get(), &glass_);
+      solids_.push_back(std::move(slab));
+    }
+    auto anode = std::make_unique<SolidBox>(0., 0., geom_.zAnode - glassCm, hx, hy, 0.);
     anode->SetBoundaryPotential(geom_.vAnode);
     anode->SetLabel("anode");
     geo_.AddSolid(anode.get(), &cu_);
@@ -1114,6 +1140,7 @@ class ThgemDetector {
 
   MediumConductor cu_;
   MediumPlastic   diel_;
+  MediumPlastic   glass_;
   GeometrySimple  geo_;
   PeriodicNeBem3d nebem_;
   std::vector<std::unique_ptr<Solid>> solids_;
@@ -2709,6 +2736,8 @@ std::string BuildRunFolderName(const Config& cfg) {
   return ss.str();
 }
 
+#include "glass_signal.hh"
+
 } // namespace
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -2723,6 +2752,8 @@ int main(int argc, char* argv[]) {
     TH1::StatOverflows(true);
     const auto opts = ParseCli(argc, argv);
     Config cfg = LoadConfig(opts.configPath);
+    if (opts.glassExport || opts.glassPlanar || !opts.glassReplay.empty())
+      return RunGlassDiagnostic(opts, cfg);
 
     const auto seed = static_cast<UInt_t>(cfg.simulation.randomSeed);
     gRandom->SetSeed(seed);

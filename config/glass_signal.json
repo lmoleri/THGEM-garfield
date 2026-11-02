@@ -1,0 +1,90 @@
+{
+  "amplifier": {
+    "bandwidth_high_hz": 2000000000.0,
+    "enable": false,
+    "gain_db": 40.0,
+    "input_impedance_ohm": 50.0,
+    "output_sample_ns": 0.0
+  },
+  "fields": {
+    "delta_v_thgem_V": 1900.0,
+    "dielectric_surface_charge": 0.0,
+    "dump_raw_field": false,
+    "e_drift_kvcm": 1.0,
+    "e_induction_kvcm": 2.0,
+    "inpaint_conductors": false,
+    "use_raw_nebem": true
+  },
+  "gas": {
+    "disable_attachment": false,
+    "e_field_max_vcm": 400000.0,
+    "e_field_min_vcm": 100.0,
+    "enable_penning": true,
+    "gas1": "ar",
+    "gas1_fraction_pct": 93.0,
+    "gas2": "co2",
+    "ion_species": "co2",
+    "max_electron_energy_eV": 2000.0,
+    "n_field_points": 110,
+    "n_magboltz_collisions": 2,
+    "pressure_Torr": 760.0,
+    "temperature_K": 293.0,
+    "transport_max_energy_eV": 200.0,
+    "w_value_eV": 26.0
+  },
+  "geometry": {
+    "copper_thickness_um": 50,
+    "dielectric_material": "fr4",
+    "drift_gap_mm": 5,
+    "edge_round_um": 0.0,
+    "grid_nx": 31,
+    "grid_nz": 131,
+    "hole_diameter_um": 500.0,
+    "hole_pitch_um": 1000.0,
+    "hole_sectors": 4,
+    "induction_gap_mm": 0.1,
+    "max_elements": 5,
+    "min_elements": 3,
+    "periodic_copies": 9,
+    "plate_thickness_um": 800.0,
+    "rim_um": 100.0,
+    "target_element_size_um": 100.0
+  },
+  "simulation": {
+    "collect_only": true,
+    "drift_only": false,
+    "dump_collection": true,
+    "enable_ion_drift": false,
+    "ion_max_step_um": 5,
+    "ion_time_window_ns": 1000000.0,
+    "max_avalanche_size": 0,
+    "max_ions_drifted": 200,
+    "mc_electron_transport": true,
+    "mc_ion_samples": 32,
+    "mc_step_um": 4,
+    "mc_weighted_paths": true,
+    "n_events": 500,
+    "random_seed": 501,
+    "store_drift_lines": false,
+    "time_step_ns": 0.5,
+    "time_window_ns": 300.0
+  },
+  "source": {
+    "energy_keV": 5.9,
+    "source_distances_mm": null,
+    "x_positions_cm": null
+  },
+  "glass_signal": {
+    "model": "glass",
+    "glass_thickness_mm": 0.8,
+    "glass_epsilon_r": 8.0,
+    "glass_resistivity_ohm_cm": 10000000000.0,
+    "sample_times_ns": [
+      1000,
+      2000,
+      5000,
+      10000,
+      20000
+    ]
+  }
+}

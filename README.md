@@ -1,5 +1,11 @@
 # THGEM Detector Simulation
 
+The opt-in [contacted-glass signal study](docs/glass_signal_hypothesis.md)
+exports timed, charge-balanced transport records and replays identical records
+with metal or glass-backed readout weighting potentials at 10 µs. The conductor
+is in ideal electrical contact with the entire rear glass face. The diagnostic
+has a separate configuration and leaves normal simulation modes unchanged.
+
 A [Garfield++](https://garfieldpp.web.cern.ch/) simulation of a **THGEM** (Thick Gas Electron
 Multiplier) — a dielectric foil, copper-clad on both faces, pierced by a periodic array of drilled
 holes. Primary electrons released in the drift gap are funnelled into a hole, multiplied in its

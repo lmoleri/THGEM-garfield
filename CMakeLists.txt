@@ -73,6 +73,25 @@ set_target_properties(thgem_sim PROPERTIES
 include(CTest)
 
 if(BUILD_TESTING)
+  find_package(Python3 QUIET COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import numpy"
+      RESULT_VARIABLE _glass_numpy OUTPUT_QUIET ERROR_QUIET)
+    if(_glass_numpy EQUAL 0)
+      add_test(NAME glass_signal_physics
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests -p test_glass_signal.py)
+      add_test(NAME glass_planar_integration
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/glass_signal_study.py
+          benchmark --binary $<TARGET_FILE:thgem_sim>
+          --out ${CMAKE_BINARY_DIR}/glass-benchmark)
+      set_tests_properties(glass_planar_integration PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+      add_test(NAME glass_contact_integration
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/glass_signal_study.py
+          contact --binary $<TARGET_FILE:thgem_sim>
+          --out ${CMAKE_BINARY_DIR}/glass-contact)
+      set_tests_properties(glass_contact_integration PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+    endif()
+  endif()
   add_test(
     NAME smoke_thgem_sim
     COMMAND thgem_sim
