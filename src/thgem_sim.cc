@@ -556,6 +556,7 @@ struct CliOptions {
   bool driftOnly = false;
   bool glassExport = false;
   bool glassPlanar = false;
+  bool glassProbe = false;
   fs::path glassReplay;
 };
 
@@ -574,6 +575,7 @@ struct CliOptions {
          "  --help             Show this message\n";
   out << "  --glass-export     Export charge-balanced, timed diagnostic snapshots.\n"
          "  --glass-replay <file> Replay snapshots using glass_signal.model weighting geometry.\n"
+         "  --glass-probe      Check a recorded transport segment against material boundaries.\n"
          "  --glass-planar     Solve the contacted-glass planar weighting benchmark.\n";
   std::exit(code);
 }
@@ -584,6 +586,8 @@ CliOptions ParseCli(int argc, char* argv[]) {
     std::string arg = argv[i];
     if (arg == "--glass-export") {
       opts.glassExport = true;
+    } else if (arg == "--glass-probe") {
+      opts.glassProbe = true;
     } else if (arg == "--glass-planar") {
       opts.glassPlanar = true;
     } else if (arg == "--glass-replay") {
@@ -1100,6 +1104,11 @@ class ThgemDetector {
   bool Initialise() { return nebem_.Initialise(); }
   ComponentNeBem3d& Component() { return nebem_; }
   const ThgemGeom& Geom() const { return geom_; }
+  std::vector<Garfield::Panel> BoundaryPanels() {
+    std::vector<Garfield::Panel> panels;
+    for (const auto& solid : solids_) solid->SolidPanels(panels);
+    return panels;
+  }
 
   // True if (x, y, z) is in the gas, i.e. not inside a copper or dielectric
   // solid.  Used to tag absorbing nodes when sampling the transport grid
@@ -2752,7 +2761,7 @@ int main(int argc, char* argv[]) {
     TH1::StatOverflows(true);
     const auto opts = ParseCli(argc, argv);
     Config cfg = LoadConfig(opts.configPath);
-    if (opts.glassExport || opts.glassPlanar || !opts.glassReplay.empty())
+    if (opts.glassExport || opts.glassPlanar || opts.glassProbe || !opts.glassReplay.empty())
       return RunGlassDiagnostic(opts, cfg);
 
     const auto seed = static_cast<UInt_t>(cfg.simulation.randomSeed);

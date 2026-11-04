@@ -9,7 +9,7 @@ Growth Grow(double w, double a, double e) {
   const double r = a - e;
   const double integral = w * (std::abs(r) < 1.e-8 ? 1. + r / 2. + r*r/6. : std::expm1(r)/r);
   Growth g{w * std::exp(r), integral*a, integral*e};
-  if (!std::isfinite(g.end) || !std::isfinite(g.ions))
+  if (!std::isfinite(g.end) || !std::isfinite(g.ions) || !std::isfinite(g.attached))
     throw std::runtime_error("Non-finite diagnostic avalanche weight");
   return g;
 }
@@ -35,6 +35,56 @@ std::string Surface(const ThgemGeom& g, const Point& p, int status) {
   // on planar outer faces. All other endpoints use one-sided raw potentials.
   return "surface";
 }
+// Partition each segment at every tessellated surface plane. Infinite planes
+// only add subdivisions: medium classification selects physical intersections.
+// This also catches a thin solid interval missed by midpoint-only sampling.
+class CollectionBoundary {
+ public:
+  explicit CollectionBoundary(ThgemDetector& detector): detector_(detector), panels_(detector.BoundaryPanels()) {}
+  bool Clip(Track& track) {
+    const auto& g=detector_.Geom();
+    for(std::size_t j=0;j+1<track.points.size();++j) {
+      const Point a=track.points[j],b=track.points[j+1];
+      if(std::min(a.z,b.z)>g.zTopCuTop || std::max(a.z,b.z)<g.zBotCuBot)continue;
+      if(b.t<=a.t)throw std::runtime_error("Non-increasing transport times");
+      const double dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;
+      const double length=std::sqrt(dx*dx+dy*dy+dz*dz);
+      std::vector<double> cuts{0.,1.};
+      const int ix0=static_cast<int>(std::floor(std::min(a.x,b.x)/g.pitchCm+.5));
+      const int ix1=static_cast<int>(std::floor(std::max(a.x,b.x)/g.pitchCm+.5));
+      const int iy0=static_cast<int>(std::floor(std::min(a.y,b.y)/g.pitchCm+.5));
+      const int iy1=static_cast<int>(std::floor(std::max(a.y,b.y)/g.pitchCm+.5));
+      for(int ix=ix0;ix<=ix1;++ix)for(int iy=iy0;iy<=iy1;++iy)for(const auto& panel:panels_) {
+        if(panel.xv.empty())continue;
+        const double denominator=panel.a*dx+panel.b*dy+panel.c*dz;
+        if(std::abs(denominator)<1.e-20)continue;
+        const double f=(panel.a*(panel.xv[0]+ix*g.pitchCm-a.x)+
+          panel.b*(panel.yv[0]+iy*g.pitchCm-a.y)+panel.c*(panel.zv[0]-a.z))/denominator;
+        if(f>0. && f<1.)cuts.push_back(f);
+      }
+      std::sort(cuts.begin(),cuts.end());
+      cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
+      for(std::size_t k=0;k+1<cuts.size();++k) {
+        const double f=(cuts[k]+cuts[k+1])/2.;
+        auto* medium=detector_.Component().GetMedium(a.x+f*dx,a.y+f*dy,a.z+f*dz);
+        if(medium && medium->IsDriftable())continue;
+        // Retain a point 1e-8 cm on the gas side, as Garfield termination does.
+        const double stop=std::max(0.,cuts[k]-1.e-8/std::max(length,1.e-30));
+        Point endpoint;endpoint.x=a.x+stop*dx;endpoint.y=a.y+stop*dy;
+        endpoint.z=a.z+stop*dz;endpoint.t=a.t+stop*(b.t-a.t);
+        track.points.resize(j+1);
+        if(stop>0.)track.points.push_back(endpoint);
+        if(track.points.size()<2)throw std::runtime_error("Collection at unresolved initial point");
+        track.status=Garfield::StatusLeftDriftMedium;
+        return true;
+      }
+    }
+    return false;
+  }
+ private:
+  ThgemDetector& detector_;
+  std::vector<Garfield::Panel> panels_;
+};
 json Settings(const CliOptions& o) { return ReadJsonFile(o.configPath).value("glass_signal", json::object()); }
 std::vector<double> Times(const json& d) {
   auto ts = d.value("sample_times_ns", std::vector<double>{1000.,2000.,5000.,10000.,20000.});
@@ -57,6 +107,8 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
   ThgemDetector detector(c.geometry,c.fields,gas); if (!detector.Initialise()) throw std::runtime_error("Transport solve failed");
   const auto& g=detector.Geom(); Sensor sensor; sensor.AddComponent(&detector.Component());
   sensor.SetArea(-3*g.pitchCm,-3*g.pitchCm,g.zAnode,3*g.pitchCm,3*g.pitchCm,g.zDrift);
+  CollectionBoundary boundary(detector);
+  std::size_t correctedElectrons=0,correctedIons=0;
   AvalancheMC electron(&sensor), ion(&sensor);
   electron.SetDistanceSteps(c.simulation.mcStepUm*1.e-4); electron.SetTimeWindow(0.,ts.back());
   electron.EnableMultiplication(false); electron.EnableAttachment(false); electron.EnableSignalCalculation(false); electron.EnableDriftLines(true);
@@ -67,6 +119,9 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
     const auto& v = negative ? ion.GetNegativeIons() : ion.GetIons();
     if (!ok || v.empty() || v.front().path.empty()) throw std::runtime_error("Diagnostic ion drift failed");
     Track tr{v.front().path,v.front().status};
+    if (Surface(g,tr.points.back(),tr.status).rfind("failed_",0)==0)
+      throw std::runtime_error("Unresolved original ion transport status " + std::to_string(tr.status));
+    if(boundary.Clip(tr))++correctedIons;
     if (Surface(g,tr.points.back(),tr.status).rfind("failed_",0)==0)
       throw std::runtime_error("Unresolved ion transport status " + std::to_string(tr.status));
     return tr;
@@ -81,17 +136,37 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
     Point start; start.x=gRandom->Uniform(-g.pitchCm/2,g.pitchCm/2); start.y=gRandom->Uniform(-g.pitchCm/2,g.pitchCm/2);
     start.z=g.zTopCuTop+gRandom->Uniform(1.e-5,g.dDriftCm-1.e-5);
     if (!electron.DriftElectron(start.x,start.y,start.z,0.) || electron.GetElectrons().empty()) throw std::runtime_error("Electron drift failed");
-    const auto el=electron.GetElectrons().front(); const auto& p=el.path;
+    const auto raw=electron.GetElectrons().front(); Track el{raw.path,raw.status};
+    if(el.points.size()<2 || Surface(g,el.points.back(),el.status).rfind("failed_",0)==0)
+      throw std::runtime_error("Unresolved original electron transport");
+    const bool corrected=boundary.Clip(el);if(corrected)++correctedElectrons;
+    const auto& p=el.points;
     if (p.size()<2 || Surface(g,p.back(),el.status).rfind("failed_",0)==0) throw std::runtime_error("Unresolved electron path");
     std::vector<double> ra(p.size()-1),re(p.size()-1),w(p.size(),1.),ci(p.size(),0.),ca(p.size(),0.);
     for (std::size_t j=0;j+1<p.size();++j) {
       // Midpoint quadrature avoids evaluating the field exactly on BEM panels.
       auto q=At(p,(p[j].t+p[j+1].t)/2.); double ex,ey,ez; Garfield::Medium* m=nullptr; int st;
       sensor.ElectricField(q.x,q.y,q.z,ex,ey,ez,m,st);
-      if (st || !m) throw std::runtime_error("Invalid transport field at quadrature point");
+      if (st || !m) {
+        auto describe = [&](const Point& v) {
+          double fx=0.,fy=0.,fz=0.; Garfield::Medium* medium=nullptr; int status=0;
+          sensor.ElectricField(v.x,v.y,v.z,fx,fy,fz,medium,status);
+          auto* geometric=detector.Component().GetMedium(v.x,v.y,v.z);
+          return json{{"x",v.x},{"y",v.y},{"z",v.z},{"t",v.t},{"field_status",status},
+                      {"field_medium",medium?medium->GetName():"null"},
+                      {"geometry_medium",geometric?geometric->GetName():"null"},
+                      {"field",{fx,fy,fz}}};
+        };
+        WriteJsonFile(out/"transport_failure.json",{{"seed",seed},{"path",ev},{"segment",j},
+          {"electron_status",el.status},{"terminal_segment",j+2==p.size()},
+          {"start",describe(p[j])},{"midpoint",describe(q)},{"end",describe(p[j+1])}});
+        throw std::runtime_error("Invalid transport field at quadrature point; see transport_failure.json");
+      }
       double a=0.,e=0.,vx=0.,vy=0.,vz=0.;
-      m->ElectronTownsend(ex,ey,ez,0.,0.,0.,a); m->ElectronAttachment(ex,ey,ez,0.,0.,0.,e);
-      m->ElectronVelocity(ex,ey,ez,0.,0.,0.,vx,vy,vz);
+      const bool coefficients=m->ElectronTownsend(ex,ey,ez,0.,0.,0.,a) &&
+        m->ElectronAttachment(ex,ey,ez,0.,0.,0.,e) && m->ElectronVelocity(ex,ey,ez,0.,0.,0.,vx,vy,vz);
+      if(!coefficients || !std::isfinite(a+e+vx+vy+vz) || a<0. || e<0.)
+        throw std::runtime_error("Invalid diagnostic transport coefficients");
       const double dl=std::sqrt(vx*vx+vy*vy+vz*vz)*(p[j+1].t-p[j].t);
       ra[j]=std::max(0.,a)*dl; re[j]=std::max(0.,e)*dl;
       const auto step=Grow(w[j],ra[j],re[j]); w[j+1]=step.end; ci[j+1]=ci[j]+step.ions; ca[j+1]=ca[j]+step.attached;
@@ -144,12 +219,13 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
         for(const auto& b:ap){const bool fixed=std::string(mode)=="fixed";auto q=fixed?b.b:At(b.mobile.points,t);emit(ev,mode,t,"negative_ion",-b.weight,q,fixed?"attached":(t<b.mobile.points.back().t?"moving":Surface(g,q,b.mobile.status)));}
       }
     }
-    ledger.push_back({{"path",ev},{"electron_weight",w.back()},{"ions",ci.back()},{"attachment",ca.back()},{"electron_status",el.status}});
-    std::cout<<"[glass export] path "<<ev+1<<"/"<<c.simulation.nEvents<<'\n';
+    ledger.push_back({{"path",ev},{"electron_weight",w.back()},{"ions",ci.back()},{"attachment",ca.back()},{"electron_status",el.status},{"collection_boundary_corrected",corrected}});
+    std::cout<<"[glass export] path "<<ev+1<<"/"<<c.simulation.nEvents<<std::endl;
   }
   f.close();if(!f)throw std::runtime_error("Snapshot write failed");
   fs::rename(out/"charge_snapshots.csv.partial",out/"charge_snapshots.csv");
   WriteJsonFile(out/"transport_ledger.json",ledger);
+  WriteJsonFile(out/"collection_boundary_checks.json",{{"corrected_electrons",correctedElectrons},{"corrected_ions",correctedIons},{"gas_side_tolerance_cm",1.e-8}});
 }
 
 std::vector<std::string> Split(const std::string& s) {
@@ -177,8 +253,9 @@ void Replay(const CliOptions& o,const Config& c,const fs::path& out) {
   using Key=std::tuple<int,int,std::string,double>;
   std::map<Key,std::array<double,4>> charges;
   std::map<std::tuple<double,double,double,std::string>,std::array<double,4>> cache;
-  double maxPartition=0.;
+  double maxPartition=0.; std::size_t processed=0;
   while(std::getline(input,line)) {
+    if (++processed % 10000 == 0) std::cout<<"[glass replay] records "<<processed<<std::endl;
     auto v=Split(line);if(v.size()!=10)throw std::runtime_error("Malformed snapshot row");
     Point p;p.x=std::stod(v[6]);p.y=std::stod(v[7]);p.z=std::stod(v[8]);const double q=std::stod(v[5]);
     const auto key=std::make_tuple(p.x,p.y,p.z,v[9]);auto it=cache.find(key);
@@ -207,6 +284,31 @@ void Replay(const CliOptions& o,const Config& c,const fs::path& out) {
   WriteJsonFile(out/"weighting_checks.json",{{"max_partition_residual",maxPartition},{"rear_weighting_potential",rear},{"model",model},{"glass_thickness_mm",thick*10.},{"glass_epsilon_r",eps},{"full_rear_face_ohmic_contact",true}});
 }
 
+void Probe(const CliOptions& o,const Config& c,const fs::path& out) {
+  MediumMagboltz gas;
+  ThgemDetector detector(c.geometry,c.fields,gas);
+  if(!detector.Initialise())throw std::runtime_error("Probe field solve failed");
+  const auto data=Settings(o).at("transport_probe");
+  auto point=[](const json& v){Point p;p.x=v.at("x");p.y=v.at("y");p.z=v.at("z");p.t=v.at("t");return p;};
+  const auto a=point(data.at("start")),b=point(data.at("end"));
+  Track track{{a,b},Garfield::StatusAlive};CollectionBoundary boundary(detector);
+  const bool clipped=boundary.Clip(track);
+  const auto endpoint=track.points.back();auto mid=At(track.points,(a.t+endpoint.t)/2.);
+  double ex,ey,ez;Garfield::Medium* m=nullptr;int status;
+  detector.Component().ElectricField(mid.x,mid.y,mid.z,ex,ey,ez,m,status);
+  if(!clipped || status || !m || !m->IsDriftable() || endpoint.t<=a.t || endpoint.t>=b.t)
+    throw std::runtime_error("Material-crossing regression failed");
+  Track periodic{{a,b},Garfield::StatusAlive};
+  for(auto& p:periodic.points)p.x+=detector.Geom().pitchCm;
+  if(!boundary.Clip(periodic) || std::abs(periodic.points.back().t-endpoint.t)>1.e-8)
+    throw std::runtime_error("Periodic material crossing regression failed");
+  const Point inside=At(std::vector<Point>{a,endpoint},a.t+.25*(endpoint.t-a.t));
+  Track clear{{a,inside},Garfield::StatusAlive};
+  if(boundary.Clip(clear))throw std::runtime_error("Gas-only segment was changed");
+  WriteJsonFile(out/"transport_probe.json",{{"periodic_check",true},{"gas_only_unchanged",true},{"clipped",clipped},{"field_status",status},
+    {"endpoint",{{"x",endpoint.x},{"y",endpoint.y},{"z",endpoint.z},{"t",endpoint.t}}}});
+}
+
 void Planar(const CliOptions& o,const Config& c,const fs::path& out) {
   const auto d=Settings(o);const double t=d.value("glass_thickness_mm",0.8)*0.1;
   const double gap=c.geometry.inductionGapMm*0.1,eps=d.value("glass_epsilon_r",8.);
@@ -233,11 +335,12 @@ void Planar(const CliOptions& o,const Config& c,const fs::path& out) {
 } // namespace glass_signal
 
 int RunGlassDiagnostic(const CliOptions& o,Config c) {
-  if(static_cast<int>(o.glassExport)+static_cast<int>(o.glassPlanar)+static_cast<int>(!o.glassReplay.empty())!=1)
+  if(static_cast<int>(o.glassExport)+static_cast<int>(o.glassPlanar)+static_cast<int>(o.glassProbe)+static_cast<int>(!o.glassReplay.empty())!=1)
     throw std::runtime_error("Select exactly one glass diagnostic mode");
   const fs::path out=o.outDir/(o.runName.empty()?"glass_diagnostic":o.runName);
   EnsureDirectory(out);WriteJsonFile(out/"input_config.json",ReadJsonFile(o.configPath));
   if(o.glassExport)glass_signal::Export(o,c,out);
+  else if(o.glassProbe)glass_signal::Probe(o,c,out);
   else if(o.glassPlanar)glass_signal::Planar(o,c,out);
   else glass_signal::Replay(o,c,out);
   return 0;

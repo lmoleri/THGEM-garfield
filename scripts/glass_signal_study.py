@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import time
 
@@ -26,6 +27,12 @@ FIELDS = [1.5, 2., 2.5]
 EPSILONS = [4., 6., 8., 10., 12.]
 CHANNELS = ["anode_e", "top_e", "bottom_e", "drift_e"]
 RUN_BINARY_SHA = None
+
+
+def write_status(root, **values):
+    temporary = root / "status.json.tmp"
+    temporary.write_text(json.dumps(dict(pid=os.getpid(), updated_unix=time.time(), **values), indent=2)+"\n")
+    temporary.replace(root / "status.json")
 
 
 def sha(path):
@@ -83,7 +90,7 @@ def run(binary, root, config, mode, snapshots=None, gas_source=None):
     folder = root / "jobs" / key
     folder.mkdir(parents=True, exist_ok=True)
     done = folder / "complete.json"
-    expected = {"export": "charge_snapshots.csv", "replay": "signal_charges.csv", "planar": "planar.json"}[mode]
+    expected = {"export": "charge_snapshots.csv", "replay": "signal_charges.csv", "planar": "planar.json", "probe": "transport_probe.json"}[mode]
     if done.exists() and (folder / expected).exists():
         if json.loads(done.read_text())["output_sha256"] != sha(folder / expected):
             raise RuntimeError(f"Changed cached output: {folder}")
@@ -102,14 +109,29 @@ def run(binary, root, config, mode, snapshots=None, gas_source=None):
     env["GARFIELD_INSTALL"] = str(REPO.parents[1] / "local/garfield")
     env["HEED_DATABASE"] = env["GARFIELD_INSTALL"] + "/share/Heed/database"
     begin = time.monotonic()
-    (root / "status.json").write_text(json.dumps(dict(pid=os.getpid(), state="running", stage=mode,
-                                                       job=str(folder), log=str(folder/"run.log")), indent=2)+"\n")
+    write_status(root, state="running", stage=mode, job=str(folder), log=str(folder/"run.log"))
     print(f"{mode}: {folder.name} gap={config['geometry']['induction_gap_mm']} "
           f"field={config['fields']['e_induction_kvcm']} model={config['glass_signal']['model']}", flush=True)
     with (folder / "run.log").open("w") as log:
-        result = subprocess.run(cmd, cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode:
-        raise RuntimeError(f"{mode} failed ({result.returncode}); see {folder / 'run.log'}")
+        child = subprocess.Popen(cmd, cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            while True:
+                code = child.poll()
+                write_status(root, state="running", stage=mode, job=str(folder), log=str(folder/"run.log"),
+                             child_pid=child.pid, elapsed_s=time.monotonic()-begin,
+                             last_progress_unix=(folder/"run.log").stat().st_mtime)
+                if code is not None:
+                    break
+                time.sleep(2)
+        except BaseException:
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill(); child.wait()
+            raise
+    if code:
+        raise RuntimeError(f"{mode} failed ({code}); see {folder / 'run.log'}")
     identity.update(elapsed_s=time.monotonic()-begin, output_sha256=sha(folder / expected))
     done.write_text(json.dumps(identity, indent=2) + "\n")
     return folder
@@ -229,10 +251,11 @@ def analyse(root):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(2, 2, figsize=(10, 8), constrained_layout=True)
-    pilot_label = "Validation pilot — insufficient statistics" if any(r["paths"] < 1000 for r in rows) else "Paired readout comparison"
-    fig.suptitle(pilot_label + " | 10 µs, 2 kV/cm")
+    pilot_label = "Partial study — insufficient statistics" if any(r["paths"] < 1000 for r in rows) else "Paired readout comparison"
+    plot_field = 2. if any(r["field_kvcm"] == 2. for r in rows) else rows[0]["field_kvcm"]
+    fig.suptitle(pilot_label + f" | 10 µs, {plot_field:g} kV/cm")
     for eps in sorted({r["epsilon_r"] for r in rows}):
-        a = [r for r in rows if r["time_ns"] == 10000 and r["attachment"] == "mobile" and r["epsilon_r"] == eps and r["field_kvcm"] == 2 and r["variant"] == "baseline"]
+        a = [r for r in rows if r["time_ns"] == 10000 and r["attachment"] == "mobile" and r["epsilon_r"] == eps and r["field_kvcm"] == plot_field and r["variant"] == "baseline"]
         if not a: continue
         for ax, key in zip(axes.flat, ["R_glass", "F", "anode_factor", "top_factor"]):
             ax.errorbar([r["gap_mm"] for r in a], [r[key] for r in a],
@@ -242,7 +265,7 @@ def analyse(root):
     axes[0, 0].legend(); fig.savefig(root / "glass_comparison.png", dpi=160); plt.close(fig)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     fig.suptitle(pilot_label)
-    central = [r for r in rows if r["epsilon_r"] == 8 and r["field_kvcm"] == 2 and r["variant"] == "baseline"]
+    central = [r for r in rows if r["epsilon_r"] == 8 and r["field_kvcm"] == plot_field and r["variant"] == "baseline"]
     for gap in sorted({r["gap_mm"] for r in central}):
         for mode in ["fixed", "mobile"]:
             a = [r for r in central if r["gap_mm"] == gap and r["attachment"] == mode]
@@ -267,7 +290,7 @@ def analyse(root):
             numerical.append(dict(gap_mm=r["gap_mm"], epsilon_r=r["epsilon_r"], attachment=r["attachment"],
                                   relative_change=abs(r["F"]/reference["F"]-1)))
     (root / "convergence.json").write_text(json.dumps(numerical, indent=2)+"\n")
-    by_gap = {r["gap_mm"]: r for r in central if r["attachment"] == "mobile" and r["time_ns"] == 10000}
+    by_gap = {r["gap_mm"]: r for r in central if r["field_kvcm"] == 2. and r["attachment"] == "mobile" and r["time_ns"] == 10000}
     converged = len(numerical) >= 20 and all(v["relative_change"] < .02 for v in numerical)
     attachment_ok = all(abs(r["F"]/next(v["F"] for v in rows if all(v[k] == r[k] for k in ["gap_mm", "field_kvcm", "epsilon_r", "variant", "time_ns"]) and v["attachment"] == "fixed")-1) < .02 for r in rows if r["attachment"] == "mobile" and r["time_ns"] == 10000)
     precise = all(r["paths"] >= 1000 and r["F_hi"]-r["F_lo"] <= .05 for r in rows if r["time_ns"] == 10000)
@@ -367,6 +390,8 @@ def study(args, base):
                                               thickness_mm=c["glass_signal"].get("glass_thickness_mm", .8),
                                               rho_ohm_cm=c["glass_signal"].get("glass_resistivity_ohm_cm", 1e10)))
                             index_file.write_text(json.dumps(index, indent=2)+"\n")
+                        # Publish the completed seed before starting the next one.
+                        analyse(args.out)
                     rows = analyse(args.out)
                     subset = [r for r in rows if r["gap_mm"] == gap and r["field_kvcm"] == field and r["time_ns"] == 10000 and r["variant"] == variant]
                     if all(r["valid"] and r["F_hi"]-r["F_lo"] <= .05 for r in subset):
@@ -375,21 +400,55 @@ def study(args, base):
                         raise RuntimeError("Readout validity gate failed; inspect summary.csv before increasing statistics")
 
 
+def regression(args, base):
+    config=copy.deepcopy(base)
+    config["geometry"]["induction_gap_mm"] = .1
+    config["fields"]["e_induction_kvcm"] = 1.5
+    config["glass_signal"]["transport_probe"] = json.loads((REPO/"tests/data/glass_material_crossing.json").read_text())
+    run(args.binary,args.out,config,"probe")
+
+
+def validate_transport(args, base):
+    report = []
+    # Exercise the known failing seed first, then compare the unchanged seed.
+    for seed in [502, 501]:
+        config = copy.deepcopy(base)
+        config["geometry"]["induction_gap_mm"] = .1
+        config["fields"]["e_induction_kvcm"] = 1.5
+        config["simulation"].update(n_events=500, random_seed=seed)
+        job = run(args.binary, args.out, config, "export", gas_source=args.gas_source)
+        residual = validate_snapshots(job/"charge_snapshots.csv")
+        entry = dict(seed=seed, paths=500, max_charge_residual=residual, job=str(job),
+                     collection_boundaries=json.loads((job/"collection_boundary_checks.json").read_text()))
+        if seed == 501 and args.reference_transport:
+            old = args.reference_transport
+            entry["snapshot_byte_identical"] = sha(old/"charge_snapshots.csv") == sha(job/"charge_snapshots.csv")
+            before = json.loads((old/"transport_ledger.json").read_text())
+            after = json.loads((job/"transport_ledger.json").read_text())
+            entry["unchanged_ledger_paths"] = sum(all(a[k] == b[k] for k in a) for a,b in zip(before,after))
+            entry["max_relative_electron_weight_change"] = max(abs(a["electron_weight"]-b["electron_weight"])/max(abs(a["electron_weight"]),1.) for a,b in zip(before,after))
+        report.append(entry)
+        (args.out/"transport_validation.json").write_text(json.dumps(report, indent=2)+"\n")
+
+
 def main():
     global RUN_BINARY_SHA
+    def interrupted(signum, frame):
+        raise SystemExit(f"Interrupted by signal {signum}")
+    signal.signal(signal.SIGTERM, interrupted)
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=["benchmark", "contact", "pilot", "sweep", "analyse"])
+    p.add_argument("command", choices=["benchmark", "contact", "pilot", "sweep", "analyse", "validate-transport", "regression"])
     p.add_argument("--binary", type=Path, default=REPO/"build/thgem_sim")
     p.add_argument("--config", type=Path, default=REPO/"config/glass_signal.json")
     p.add_argument("--out", type=Path, default=REPO/"results/glass_signal/study")
     p.add_argument("--gas-source", type=Path)
+    p.add_argument("--reference-transport", type=Path, help="previous seed-501 export directory for recovery comparison")
     p.add_argument("--paths", type=int, default=4, help="pilot paths only; production uses 500/1000/2000")
     p.add_argument("--convergence", action="store_true", help="run the prescribed refined extreme-gap cases")
     args = p.parse_args()
     args.binary = args.binary.resolve(); args.out = args.out.resolve(); args.out.mkdir(parents=True, exist_ok=True)
     RUN_BINARY_SHA = sha(args.binary)
-    (args.out / "status.json").write_text(json.dumps(dict(pid=os.getpid(), state="waiting_for_solver_lock",
-                                                          command=args.command), indent=2)+"\n")
+    write_status(args.out, state="waiting_for_solver_lock", command=args.command)
     with Path("/tmp/thgem-glass-nebem.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         base = json.loads(args.config.read_text())
@@ -397,11 +456,16 @@ def main():
             if args.command == "benchmark": benchmark(args, base)
             elif args.command == "contact": contact(args, base)
             elif args.command == "analyse": analyse(args.out)
+            elif args.command == "regression": regression(args, base)
+            elif args.command == "validate-transport": validate_transport(args, base)
             else: study(args, base)
         except BaseException as error:
-            (args.out / "status.json").write_text(json.dumps(dict(pid=os.getpid(), state="failed_or_interrupted", message=str(error)), indent=2)+"\n")
+            previous = json.loads((args.out/"status.json").read_text())
+            previous.pop("pid", None); previous.pop("updated_unix", None)
+            previous.update(state="failed_or_interrupted", message=str(error))
+            write_status(args.out, **previous)
             raise
-        (args.out / "status.json").write_text(json.dumps(dict(pid=os.getpid(), state="complete", command=args.command), indent=2)+"\n")
+        write_status(args.out, state="complete", command=args.command)
 
 
 if __name__ == "__main__":

@@ -187,3 +187,44 @@ See `docs/data/glass_signal_validation_pilot.csv` for both attachment models
 and all observation times.
 
 ![Two-path validation pilot; insufficient statistics](figures/glass_signal_validation_pilot.png)
+
+## Recovery and progress monitoring
+
+The runner writes `status.json` atomically every two seconds while a child is
+active. It includes `child_pid`, elapsed time, and `last_progress_unix` (the
+child log modification time). A heartbeat shows the runner is alive; the log
+modification time measures solver/replay progress. Replay reports every 10,000
+snapshot rows. Check process existence as well as the saved status after an
+unclean machine or session exit. Failures retain the stage and log location and
+are never retried automatically.
+
+`validate-transport` runs the first 0.1 mm, 1.5 kV/cm case for 500 paths for
+both seeds before a recovered sweep. `--reference-transport DIRECTORY` compares
+the new seed-501 snapshots and avalanche ledger against an earlier export.
+Use the same output directory for validation and the subsequent `sweep
+--convergence` command so the validated exports are reused. Freeze the new
+executable in a fresh result directory; keep the original results and executable
+for provenance. Partial summaries are published after each completed seed.
+
+### Seed-502 material-crossing regression
+
+The original 0.1 mm, 1.5 kV/cm export failed on zero-based path 18,
+segment 3709. Both endpoints were gas, but the interpolated midpoint was FR4
+(field status -5). A diffusive step crossed the hole-exit corner and returned
+to gas; the endpoint checks in AvalancheMC did not detect that intersection.
+The recorded case is in `tests/data/glass_material_crossing.json`.
+
+The diagnostic now partitions electron and ion segments at the planes of all
+actual tessellated solid surfaces, including periodic copies, and classifies
+each resulting interval by its medium. At the first material entry it terminates
+the trajectory 1e-8 cm on the gas side, retaining the deposited charge there.
+Multiplication, attachment births, and all snapshots use the resulting gas-only
+trajectory. This fixes a missed collection boundary; it changes diagnostic
+collection where an old step passed through a solid. The default simulator is
+unaffected. Original failed transport statuses remain fatal.
+
+`regression` / `--glass-probe` checks the recorded segment without rerunning
+preceding paths, verifies its periodic translation, and checks that a gas-only
+segment is unchanged. `collection_boundary_checks.json` records correction
+counts for completed exports. Recovered results require a new executable hash
+and are kept separate from the original production run.

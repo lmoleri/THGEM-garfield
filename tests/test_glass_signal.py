@@ -12,6 +12,37 @@ spec.loader.exec_module(glass)
 
 
 class GlassSignalTests(unittest.TestCase):
+    def test_atomic_status(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            glass.write_status(root, state="running", child_pid=123, last_progress_unix=10.)
+            state = json.loads((root/"status.json").read_text())
+            self.assertEqual(state["child_pid"], 123)
+            self.assertEqual(state["last_progress_unix"], 10.)
+            glass.write_status(root, state="failed_or_interrupted", message="test")
+            self.assertEqual(json.loads((root/"status.json").read_text())["state"], "failed_or_interrupted")
+            self.assertFalse((root/"status.json.tmp").exists())
+
+    def test_failed_child_retains_diagnostics_without_retry(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            binary = root/"fail"
+            binary.write_text("#!/bin/sh\necho intentional-failure\nexit 7\n")
+            binary.chmod(0o755)
+            config = {"geometry": {"induction_gap_mm": .1},
+                      "fields": {"e_induction_kvcm": 1.5}, "glass_signal": {"model": "glass"}}
+            with self.assertRaisesRegex(RuntimeError, r"planar failed \(7\)"):
+                glass.run(binary, root, config, "planar")
+            jobs = list((root/"jobs").iterdir())
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual((jobs[0]/"run.log").read_text().count("intentional-failure"), 1)
+            self.assertFalse((jobs[0]/"complete.json").exists())
+            status = json.loads((root/"status.json").read_text())
+            self.assertIn("child_pid", status)
+            self.assertIn("last_progress_unix", status)
+
     def test_snapshot_conservation(self):
         with tempfile.TemporaryDirectory() as folder:
             p = Path(folder)/"snapshots.csv"
