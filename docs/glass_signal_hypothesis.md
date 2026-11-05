@@ -228,3 +228,41 @@ preceding paths, verifies its periodic translation, and checks that a gas-only
 segment is unchanged. `collection_boundary_checks.json` records correction
 counts for completed exports. Recovered results require a new executable hash
 and are kept separate from the original production run.
+
+### Seed-501 duplicate terminal point
+
+The first `production_v2` validation stopped at seed 501, path index 325, with
+"Non-increasing transport times": the collection clipper rejected every segment
+with zero elapsed time. An isolated reproduction (`results/glass_signal/repro_seed501_dup`)
+identified the single offending trajectory: a mobile negative ion (attachment
+sample 45) collected on the FR4 hole wall (r ≈ 249 µm, z ≈ −361 µm), status
+`StatusLeftDriftMedium`, whose last point was an exact copy of the previous one.
+`AvalancheMC::Terminate` restarts its boundary search at the last accepted point
+and advances only by in-medium bisection midpoints. The previous point was
+already 1e-9 cm from the FR4, no midpoint was accepted, and `(x0, t0)` was
+appended again.
+
+Trajectories are now validated before clipping, interpolation and charge
+integration. Only exact duplicate terminal points are removed: identical
+coordinates and time, a collection status, and a collection boundary found by a
+medium/sensor-area query along the continuation of the last step (else the
+nearest of 26 directions) within 1.5 steps. The endpoint, deposited charge and
+status are those of the retained point. Backward time, non-finite values,
+displacement at unchanged time, interior duplicates, and duplicates without a
+collection status or boundary remain fatal and write `trajectory_failure.json`.
+Removals are counted per path in `transport_ledger.json` and recorded in
+`trajectory_normalization.json`; every removal inside the plate's z range keeps
+its full neighbourhood (positions, times, field statuses, media).
+
+In the 326-path reproduction exactly one point was removed, at the boundary
+found at 1.04e-9 cm ("Plastic", field status −5). Compared with the original
+seed-501 export, all 326 ledger entries are unchanged. The 2 paths with changed
+snapshots are both explained by ion collection clipping, and path 325's
+snapshots are identical. All 324 complete paths of the stopped `production_v2`
+seed-501 export match row for row. The recorded tail is the fixture
+`tests/data/glass_duplicate_terminal_point.json`. `trajectory-regression` (CTest
+`glass_trajectory_regression`) checks removal with unchanged endpoint, status,
+growth charge and snapshot positions; repeated duplicates; a kept stationary
+segment with positive elapsed time; and rejection of backward time, movement at
+zero elapsed time, interior duplicates, a duplicate without a collection status,
+and non-finite values.

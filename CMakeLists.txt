@@ -90,6 +90,11 @@ if(BUILD_TESTING)
           regression --binary $<TARGET_FILE:thgem_sim>
           --out ${CMAKE_BINARY_DIR}/glass-regression)
       set_tests_properties(glass_transport_regression PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
+      add_test(NAME glass_trajectory_regression
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/glass_signal_study.py
+          trajectory-regression --binary $<TARGET_FILE:thgem_sim>
+          --out ${CMAKE_BINARY_DIR}/glass-trajectory-regression)
+      set_tests_properties(glass_trajectory_regression PROPERTIES RUN_SERIAL TRUE TIMEOUT 600)
       add_test(NAME glass_contact_integration
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/glass_signal_study.py
           contact --binary $<TARGET_FILE:thgem_sim>

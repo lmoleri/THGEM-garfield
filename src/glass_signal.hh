@@ -85,6 +85,153 @@ class CollectionBoundary {
   ThgemDetector& detector_;
   std::vector<Garfield::Panel> panels_;
 };
+// Trajectory-time validation, applied before clipping, interpolation and charge integration.
+// AvalancheMC::Terminate restarts its boundary search from the last accepted point (x0, t0)
+// and advances only by in-medium bisection midpoints; when it accepts none it returns
+// (x0, t0) unchanged and the caller still appends it as the terminal point. That exact
+// duplicate, with a collection status at a verified collection boundary, is the only point
+// removed: the endpoint, deposited charge and status are those of the retained point.
+// Backward time, non-finite values and any other zero-duration segment remain fatal.
+struct TrackId { std::string species; std::size_t path; long sample; };
+class TrackNormalizer {
+ public:
+  TrackNormalizer(ThgemDetector& detector, Sensor& sensor, fs::path out)
+    : detector_(detector), sensor_(sensor), out_(std::move(out)) {}
+  // Returns the number of exact duplicate terminal points removed.
+  std::size_t Normalize(Track& track, const TrackId& id, double stepCm) {
+    auto& p = track.points;
+    for (std::size_t j = 0; j < p.size(); ++j)
+      if (!std::isfinite(p[j].x) || !std::isfinite(p[j].y) || !std::isfinite(p[j].z) || !std::isfinite(p[j].t))
+        Fail(track, id, j, "non-finite trajectory point");
+    std::size_t removed = 0;
+    while (p.size() >= 2 && Same(p[p.size()-2], p.back())) {
+      const std::size_t j = p.size() - 2;
+      if (!Collected(track.status)) Fail(track, id, j, "duplicate terminal point without a collection status");
+      const json boundary = BoundaryProbe(p.back(), p.size() >= 3 ? &p[p.size()-3] : nullptr, stepCm);
+      if (!boundary.at("verified"))
+        Fail(track, id, j, "duplicate terminal point not at a collection boundary", boundary);
+      // Duplicates inside the plate's z range are the ones the boundary clipper rejected:
+      // keep every one of them; cap the rest (anode / drift-plane collections).
+      const auto& g = detector_.Geom();
+      const bool inPlate = p.back().z >= g.zBotCuBot && p.back().z <= g.zTopCuTop;
+      if (inPlate || other_ < 1000) {
+        records_.push_back({{"species", id.species}, {"path", id.path}, {"sample", id.sample},
+                            {"status", track.status}, {"points_before", p.size()}, {"in_plate", inPlate},
+                            {"boundary", boundary}, {"tail", Tail(p, j)}});
+        if (!inPlate) ++other_;
+      }
+      p.pop_back(); ++removed;
+    }
+    for (std::size_t j = 0; j + 1 < p.size(); ++j) {
+      if (p[j+1].t < p[j].t) Fail(track, id, j, "backward time");
+      if (p[j+1].t == p[j].t)
+        Fail(track, id, j, Same(p[j], p[j+1]) ? "duplicate point inside the trajectory"
+                                              : "spatial displacement at unchanged time");
+    }
+    if (removed) { ++counts_[id.species + " status " + std::to_string(track.status)]; points_ += removed; }
+    return removed;
+  }
+  json Summary() const {
+    return {{"duplicate_terminal_points_removed", points_}, {"tracks_by_species_and_status", counts_},
+            {"records", records_}, {"outside_plate_records_truncated", other_ >= 1000}};
+  }
+  static bool Same(const Point& a, const Point& b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.t == b.t; }
+  static bool Collected(int status) {
+    return status == Garfield::StatusLeftDriftMedium || status == Garfield::StatusLeftDriftArea ||
+           status == Garfield::StatusHitPlane;
+  }
+  // Locate the collection boundary next to a duplicate terminal point x0 by the medium and
+  // sensor-area query: first along the continuation of the last step (the direction of the
+  // step Terminate rejected), otherwise the nearest hit over 26 directions.  The search runs
+  // to 1.5 steps (the rejected step was at most one step) and the distance is refined by
+  // bisection.  Records the distance, the medium found and how it was located.
+  json BoundaryProbe(const Point& x0, const Point* previous, double stepCm) const {
+    auto outside = [&](double x, double y, double z, std::string& what) {
+      if (!sensor_.IsInArea(x, y, z)) { what = "outside sensor area"; return true; }
+      double ex = 0., ey = 0., ez = 0.; Garfield::Medium* m = nullptr; int st = 0;
+      sensor_.ElectricField(x, y, z, ex, ey, ez, m, st);
+      if (st == 0 && m && m->IsDriftable()) return false;
+      auto* geometric = detector_.Component().GetMedium(x, y, z);
+      what = std::string(geometric ? geometric->GetName() : "no medium") + " (field status " + std::to_string(st) + ")";
+      return true;
+    };
+    auto along = [&](double ux, double uy, double uz, json& hit) {
+      const double rmax = 1.5 * stepCm; double lo = 0.; std::string what;
+      for (int k = 1; k <= 64; ++k) {
+        double hi = rmax * k / 64.;
+        if (!outside(x0.x + ux*hi, x0.y + uy*hi, x0.z + uz*hi, what)) { lo = hi; continue; }
+        for (int b = 0; b < 40; ++b) {
+          const double mid = 0.5 * (lo + hi); std::string w;
+          if (outside(x0.x + ux*mid, x0.y + uy*mid, x0.z + uz*mid, w)) { hi = mid; what = w; } else lo = mid;
+        }
+        hit = {{"verified", true}, {"distance_cm", hi}, {"medium", what}, {"direction", {ux, uy, uz}}};
+        return true;
+      }
+      return false;
+    };
+    json hit;
+    if (previous) {
+      const double dx = x0.x - previous->x, dy = x0.y - previous->y, dz = x0.z - previous->z;
+      const double n = std::sqrt(dx*dx + dy*dy + dz*dz);
+      if (n > 0. && along(dx/n, dy/n, dz/n, hit)) { hit["method"] = "continuation of the last step"; return hit; }
+    }
+    json best = {{"verified", false}, {"search_radius_cm", 1.5 * stepCm}};
+    for (int i = -1; i <= 1; ++i) for (int j = -1; j <= 1; ++j) for (int k = -1; k <= 1; ++k) {
+      if (!i && !j && !k) continue;
+      const double n = std::sqrt(double(i*i + j*j + k*k));
+      if (along(i/n, j/n, k/n, hit) && (!best.at("verified") || hit.at("distance_cm") < best.at("distance_cm"))) best = hit;
+    }
+    if (best.at("verified")) best["method"] = "nearest of 26 directions";
+    return best;
+  }
+ private:
+  json Describe(const Point& v) const {
+    double fx = 0., fy = 0., fz = 0.; Garfield::Medium* medium = nullptr; int status = 0;
+    sensor_.ElectricField(v.x, v.y, v.z, fx, fy, fz, medium, status);
+    auto* geometric = detector_.Component().GetMedium(v.x, v.y, v.z);
+    return {{"x", v.x}, {"y", v.y}, {"z", v.z}, {"t", v.t}, {"field_status", status},
+            {"field_medium", medium ? medium->GetName() : "null"},
+            {"geometry_medium", geometric ? geometric->GetName() : "null"},
+            {"in_area", sensor_.IsInArea(v.x, v.y, v.z)}, {"field", {fx, fy, fz}}};
+  }
+  json Tail(const std::vector<Point>& p, std::size_t j) const {
+    json v = json::array();
+    for (std::size_t k = j >= 2 ? j - 2 : 0; k < std::min(p.size(), j + 3); ++k) {
+      auto d = Describe(p[k]); d["index"] = k; v.push_back(d);
+    }
+    return v;
+  }
+  [[noreturn]] void Fail(const Track& track, const TrackId& id, std::size_t j, const std::string& reason,
+                         const json& boundary = json()) const {
+    WriteJsonFile(out_ / "trajectory_failure.json",
+                  {{"reason", reason}, {"species", id.species}, {"path", id.path}, {"sample", id.sample},
+                   {"segment", j}, {"status", track.status}, {"points", track.points.size()},
+                   {"boundary", boundary}, {"neighbourhood", Tail(track.points, j)}});
+    throw std::runtime_error("Invalid trajectory (" + reason + "); see trajectory_failure.json");
+  }
+  ThgemDetector& detector_;
+  Sensor& sensor_;
+  fs::path out_;
+  std::map<std::string, std::size_t> counts_;
+  std::size_t points_ = 0, other_ = 0;
+  json records_ = json::array();
+};
+// Townsend and attachment integrals over electron segment j, by midpoint quadrature (avoids
+// evaluating the field exactly on BEM panels).  False if the quadrature point q has no valid
+// field; the caller reports it.
+bool SegmentRates(Sensor& sensor, const std::vector<Point>& p, std::size_t j, double& ra, double& re, Point& q) {
+  q=At(p,(p[j].t+p[j+1].t)/2.); double ex,ey,ez; Garfield::Medium* m=nullptr; int st;
+  sensor.ElectricField(q.x,q.y,q.z,ex,ey,ez,m,st);
+  if (st || !m) return false;
+  double a=0.,e=0.,vx=0.,vy=0.,vz=0.;
+  const bool coefficients=m->ElectronTownsend(ex,ey,ez,0.,0.,0.,a) &&
+    m->ElectronAttachment(ex,ey,ez,0.,0.,0.,e) && m->ElectronVelocity(ex,ey,ez,0.,0.,0.,vx,vy,vz);
+  if(!coefficients || !std::isfinite(a+e+vx+vy+vz) || a<0. || e<0.)
+    throw std::runtime_error("Invalid diagnostic transport coefficients");
+  const double dl=std::sqrt(vx*vx+vy*vy+vz*vz)*(p[j+1].t-p[j].t);
+  ra=std::max(0.,a)*dl; re=std::max(0.,e)*dl;
+  return true;
+}
 json Settings(const CliOptions& o) { return ReadJsonFile(o.configPath).value("glass_signal", json::object()); }
 std::vector<double> Times(const json& d) {
   auto ts = d.value("sample_times_ns", std::vector<double>{1000.,2000.,5000.,10000.,20000.});
@@ -108,20 +255,24 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
   const auto& g=detector.Geom(); Sensor sensor; sensor.AddComponent(&detector.Component());
   sensor.SetArea(-3*g.pitchCm,-3*g.pitchCm,g.zAnode,3*g.pitchCm,3*g.pitchCm,g.zDrift);
   CollectionBoundary boundary(detector);
+  TrackNormalizer normalizer(detector,sensor,out);
   std::size_t correctedElectrons=0,correctedIons=0;
+  std::size_t currentPath=0,pathIonsCorrected=0,pathDuplicates=0; long ionSample=0;
+  const double electronStepCm=c.simulation.mcStepUm*1.e-4, ionStepCm=c.simulation.ionMaxStepUm*1.e-4;
   AvalancheMC electron(&sensor), ion(&sensor);
   electron.SetDistanceSteps(c.simulation.mcStepUm*1.e-4); electron.SetTimeWindow(0.,ts.back());
   electron.EnableMultiplication(false); electron.EnableAttachment(false); electron.EnableSignalCalculation(false); electron.EnableDriftLines(true);
   ion.SetDistanceSteps(c.simulation.ionMaxStepUm*1.e-4); ion.SetTimeWindow(0.,ts.back());
   ion.EnableSignalCalculation(false); ion.EnableDriftLines(true);
-  auto drift = [&](const Point& b, bool negative) {
+  auto drift = [&](const Point& b, bool negative, const char* species) {
     const bool ok = negative ? ion.DriftNegativeIon(b.x,b.y,b.z,b.t) : ion.DriftIon(b.x,b.y,b.z,b.t);
     const auto& v = negative ? ion.GetNegativeIons() : ion.GetIons();
     if (!ok || v.empty() || v.front().path.empty()) throw std::runtime_error("Diagnostic ion drift failed");
     Track tr{v.front().path,v.front().status};
+    pathDuplicates+=normalizer.Normalize(tr,{species,currentPath,ionSample++},ionStepCm);
     if (Surface(g,tr.points.back(),tr.status).rfind("failed_",0)==0)
       throw std::runtime_error("Unresolved original ion transport status " + std::to_string(tr.status));
-    if(boundary.Clip(tr))++correctedIons;
+    if(boundary.Clip(tr)){++correctedIons;++pathIonsCorrected;}
     if (Surface(g,tr.points.back(),tr.status).rfind("failed_",0)==0)
       throw std::runtime_error("Unresolved ion transport status " + std::to_string(tr.status));
     return tr;
@@ -133,10 +284,12 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
   };
   json ledger=json::array();
   for (std::size_t ev=0;ev<c.simulation.nEvents;++ev) {
+    currentPath=ev;pathIonsCorrected=0;pathDuplicates=0;ionSample=0;
     Point start; start.x=gRandom->Uniform(-g.pitchCm/2,g.pitchCm/2); start.y=gRandom->Uniform(-g.pitchCm/2,g.pitchCm/2);
     start.z=g.zTopCuTop+gRandom->Uniform(1.e-5,g.dDriftCm-1.e-5);
     if (!electron.DriftElectron(start.x,start.y,start.z,0.) || electron.GetElectrons().empty()) throw std::runtime_error("Electron drift failed");
     const auto raw=electron.GetElectrons().front(); Track el{raw.path,raw.status};
+    pathDuplicates+=normalizer.Normalize(el,{"electron",ev,-1},electronStepCm);
     if(el.points.size()<2 || Surface(g,el.points.back(),el.status).rfind("failed_",0)==0)
       throw std::runtime_error("Unresolved original electron transport");
     const bool corrected=boundary.Clip(el);if(corrected)++correctedElectrons;
@@ -144,10 +297,8 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
     if (p.size()<2 || Surface(g,p.back(),el.status).rfind("failed_",0)==0) throw std::runtime_error("Unresolved electron path");
     std::vector<double> ra(p.size()-1),re(p.size()-1),w(p.size(),1.),ci(p.size(),0.),ca(p.size(),0.);
     for (std::size_t j=0;j+1<p.size();++j) {
-      // Midpoint quadrature avoids evaluating the field exactly on BEM panels.
-      auto q=At(p,(p[j].t+p[j+1].t)/2.); double ex,ey,ez; Garfield::Medium* m=nullptr; int st;
-      sensor.ElectricField(q.x,q.y,q.z,ex,ey,ez,m,st);
-      if (st || !m) {
+      Point q;
+      if (!SegmentRates(sensor,p,j,ra[j],re[j],q)) {
         auto describe = [&](const Point& v) {
           double fx=0.,fy=0.,fz=0.; Garfield::Medium* medium=nullptr; int status=0;
           sensor.ElectricField(v.x,v.y,v.z,fx,fy,fz,medium,status);
@@ -162,18 +313,11 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
           {"start",describe(p[j])},{"midpoint",describe(q)},{"end",describe(p[j+1])}});
         throw std::runtime_error("Invalid transport field at quadrature point; see transport_failure.json");
       }
-      double a=0.,e=0.,vx=0.,vy=0.,vz=0.;
-      const bool coefficients=m->ElectronTownsend(ex,ey,ez,0.,0.,0.,a) &&
-        m->ElectronAttachment(ex,ey,ez,0.,0.,0.,e) && m->ElectronVelocity(ex,ey,ez,0.,0.,0.,vx,vy,vz);
-      if(!coefficients || !std::isfinite(a+e+vx+vy+vz) || a<0. || e<0.)
-        throw std::runtime_error("Invalid diagnostic transport coefficients");
-      const double dl=std::sqrt(vx*vx+vy*vy+vz*vz)*(p[j+1].t-p[j].t);
-      ra[j]=std::max(0.,a)*dl; re[j]=std::max(0.,e)*dl;
       const auto step=Grow(w[j],ra[j],re[j]); w[j+1]=step.end; ci[j+1]=ci[j]+step.ions; ca[j+1]=ca[j]+step.attached;
     }
     // Sample the two positive measures independently; exact integration maintains
     // 1 + ionisations = free electrons + attachment charge at every snapshot.
-    const auto primary=drift(start,false);
+    const auto primary=drift(start,false,"primary_ion");
     struct Born { Point b; Track mobile; double weight; };
     auto births = [&](const std::vector<double>& cum,bool negative,double until) {
       std::vector<Born> v;
@@ -195,7 +339,7 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
         const double u2=gRandom->Uniform();
         const double frac=span*(std::abs(r)<1.e-8?u2:std::log1p(u2*std::expm1(r))/r);
         Point b=At(p,p[j].t+frac*(p[j+1].t-p[j].t));
-        v.push_back({b,drift(b,negative),total/K});
+        v.push_back({b,drift(b,negative,negative?"negative_ion":"ion"),total/K});
       }
       return v;
     };
@@ -219,13 +363,15 @@ void Export(const CliOptions& o, Config c, const fs::path& out) {
         for(const auto& b:ap){const bool fixed=std::string(mode)=="fixed";auto q=fixed?b.b:At(b.mobile.points,t);emit(ev,mode,t,"negative_ion",-b.weight,q,fixed?"attached":(t<b.mobile.points.back().t?"moving":Surface(g,q,b.mobile.status)));}
       }
     }
-    ledger.push_back({{"path",ev},{"electron_weight",w.back()},{"ions",ci.back()},{"attachment",ca.back()},{"electron_status",el.status},{"collection_boundary_corrected",corrected}});
+    ledger.push_back({{"path",ev},{"electron_weight",w.back()},{"ions",ci.back()},{"attachment",ca.back()},{"electron_status",el.status},{"collection_boundary_corrected",corrected},
+                      {"ions_boundary_corrected",pathIonsCorrected},{"duplicate_terminal_points_removed",pathDuplicates}});
     std::cout<<"[glass export] path "<<ev+1<<"/"<<c.simulation.nEvents<<std::endl;
   }
   f.close();if(!f)throw std::runtime_error("Snapshot write failed");
   fs::rename(out/"charge_snapshots.csv.partial",out/"charge_snapshots.csv");
   WriteJsonFile(out/"transport_ledger.json",ledger);
   WriteJsonFile(out/"collection_boundary_checks.json",{{"corrected_electrons",correctedElectrons},{"corrected_ions",correctedIons},{"gas_side_tolerance_cm",1.e-8}});
+  WriteJsonFile(out/"trajectory_normalization.json",normalizer.Summary());
 }
 
 std::vector<std::string> Split(const std::string& s) {
@@ -284,7 +430,74 @@ void Replay(const CliOptions& o,const Config& c,const fs::path& out) {
   WriteJsonFile(out/"weighting_checks.json",{{"max_partition_residual",maxPartition},{"rear_weighting_potential",rear},{"model",model},{"glass_thickness_mm",thick*10.},{"glass_epsilon_r",eps},{"full_rear_face_ohmic_contact",true}});
 }
 
+// Regression tests of trajectory-time normalization on a recorded trajectory tail
+// (glass_signal.trajectory_probe: species, status, step_cm, points).
+void TrajectoryProbe(const Config& c,const fs::path& out,const json& fx) {
+  MediumMagboltz gas(c.gas.gas1,c.gas.frac1,c.gas.gas2,100.-c.gas.frac1);
+  SetupGas(gas,c.gas,false);
+  ThgemDetector detector(c.geometry,c.fields,gas);
+  if(!detector.Initialise())throw std::runtime_error("Probe field solve failed");
+  const auto& g=detector.Geom(); Sensor sensor; sensor.AddComponent(&detector.Component());
+  sensor.SetArea(-3*g.pitchCm,-3*g.pitchCm,g.zAnode,3*g.pitchCm,3*g.pitchCm,g.zDrift);
+  TrackNormalizer normalizer(detector,sensor,out);
+  const double step=fx.at("step_cm");
+  Track recorded; recorded.status=fx.at("status");
+  for(const auto& v:fx.at("points")){Point p;p.x=v.at("x");p.y=v.at("y");p.z=v.at("z");p.t=v.at("t");recorded.points.push_back(p);}
+  const TrackId id{"fixture",0,0};
+  json report; std::vector<std::string> failures;
+  auto check=[&](bool ok,const std::string& name){report[name]=ok;if(!ok)failures.push_back(name);};
+  auto growth=[&](const Track& t){
+    double w=1.,ions=0.,attached=0.;
+    for(std::size_t j=0;j+1<t.points.size();++j){
+      double ra=0.,re=0.;Point q;
+      if(!SegmentRates(sensor,t.points,j,ra,re,q))throw std::runtime_error("Probe quadrature point has no valid field");
+      const auto s=Grow(w,ra,re);w=s.end;ions+=s.ions;attached+=s.attached;
+    }
+    return std::array<double,3>{w,ions,attached};
+  };
+  auto rejects=[&](Track t,const std::string& reason){
+    try{normalizer.Normalize(t,id,step);}catch(const std::runtime_error& e){return std::string(e.what()).find(reason)!=std::string::npos;}
+    return false;
+  };
+  // 1. The recorded trajectory: its exact duplicate terminal point is removed, nothing else changes.
+  Track kept=recorded;
+  const auto removed=normalizer.Normalize(kept,id,step);
+  check(removed==1,"recorded_duplicate_removed");
+  check(kept.status==recorded.status,"status_preserved");
+  check(TrackNormalizer::Same(kept.points.back(),recorded.points.back()),"endpoint_preserved");
+  check(growth(kept)==growth(recorded),"growth_charge_unchanged");
+  bool positions=true;
+  for(double t:{recorded.points.front().t,(recorded.points.front().t+recorded.points.back().t)/2.,recorded.points.back().t,recorded.points.back().t+1.e4})
+    positions&=TrackNormalizer::Same(At(kept.points,t),At(recorded.points,t));
+  check(positions,"snapshot_positions_unchanged");
+  // 2. Repeated terminal duplicates are all removed.
+  Track repeated=recorded;repeated.points.push_back(recorded.points.back());repeated.points.push_back(recorded.points.back());
+  const auto removedRepeated=normalizer.Normalize(repeated,id,step);
+  check(removedRepeated==3 && repeated.points.size()==kept.points.size(),"repeated_duplicates_removed");
+  // 3. A stationary segment with positive elapsed time is kept.
+  Track stationary=kept;{auto& p=stationary.points;Point s=p[p.size()-2];s.t=(p[p.size()-2].t+p.back().t)/2.;p.insert(p.end()-1,s);}
+  const auto stationaryPoints=stationary.points.size();
+  bool kept3=true;try{normalizer.Normalize(stationary,id,step);}catch(const std::runtime_error&){kept3=false;}
+  check(kept3 && stationary.points.size()==stationaryPoints,"stationary_positive_dt_kept");
+  // 4.-7. Invalid trajectories stay fatal.
+  Track backward=kept;{auto& p=backward.points;std::swap(p[p.size()-2].t,p.back().t);}
+  check(rejects(backward,"backward time"),"backward_time_rejected");
+  Track moving=kept;{auto& p=moving.points;p.back().t=p[p.size()-2].t;}
+  check(rejects(moving,"spatial displacement at unchanged time"),"zero_dt_movement_rejected");
+  Track interior=kept;interior.points.insert(interior.points.begin()+1,interior.points[1]);
+  check(rejects(interior,"duplicate point inside the trajectory"),"interior_duplicate_rejected");
+  Track alive=recorded;alive.status=Garfield::StatusAlive;
+  check(rejects(alive,"without a collection status"),"duplicate_without_collection_status_rejected");
+  Track nan=kept;nan.points.back().z=std::numeric_limits<double>::quiet_NaN();
+  check(rejects(nan,"non-finite"),"non_finite_rejected");
+  fs::remove(out/"trajectory_failure.json");
+  report["normalization"]=normalizer.Summary();
+  WriteJsonFile(out/"transport_probe.json",report);
+  if(!failures.empty())throw std::runtime_error("Trajectory regression failed: "+failures.front());
+}
+
 void Probe(const CliOptions& o,const Config& c,const fs::path& out) {
+  if(Settings(o).contains("trajectory_probe"))return TrajectoryProbe(c,out,Settings(o).at("trajectory_probe"));
   MediumMagboltz gas;
   ThgemDetector detector(c.geometry,c.fields,gas);
   if(!detector.Initialise())throw std::runtime_error("Probe field solve failed");

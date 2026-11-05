@@ -1,0 +1,47 @@
+{
+  "source": "seed 501, 0.1 mm, E_ind 1.5 kV/cm, path index 325 (the path that stopped production_v2), mobile negative-ion sample 45: AvalancheMC::Terminate accepted no bisection step at the FR4 hole wall and appended (x0, t0) again",
+  "species": "negative_ion",
+  "status": -5,
+  "step_cm": 0.0005,
+  "boundary": {
+    "direction": [
+      -0.5167345404599284,
+      -0.014612247770360574,
+      -0.8560209675649098
+    ],
+    "distance_cm": 1.0407588391103673e-09,
+    "medium": "Plastic (field status -5)",
+    "method": "continuation of the last step",
+    "verified": true
+  },
+  "points": [
+    {
+      "x": -0.017247563782758255,
+      "y": -0.017863396511413714,
+      "z": -0.03597489067785207,
+      "t": 394.59629691965773,
+      "index": 16
+    },
+    {
+      "x": -0.01729540925051706,
+      "y": -0.017882897080364963,
+      "z": -0.03609038966638137,
+      "t": 401.37206087982395,
+      "index": 17
+    },
+    {
+      "x": -0.017320953077825087,
+      "y": -0.017883619410119223,
+      "z": -0.03613270549792626,
+      "t": 404.78759923822923,
+      "index": 18
+    },
+    {
+      "x": -0.017320953077825087,
+      "y": -0.017883619410119223,
+      "z": -0.03613270549792626,
+      "t": 404.78759923822923,
+      "index": 19
+    }
+  ]
+}

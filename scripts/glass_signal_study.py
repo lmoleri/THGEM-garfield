@@ -76,7 +76,8 @@ def run(binary, root, config, mode, snapshots=None, gas_source=None):
     if RUN_BINARY_SHA is not None and executable_hash != RUN_BINARY_SHA:
         raise RuntimeError("Executable changed during study; restart to preserve reproducibility")
     table = None
-    if mode == "export":
+    # Exports and trajectory probes evaluate Townsend/attachment rates from the gas table.
+    if mode == "export" or (mode == "probe" and "trajectory_probe" in config.get("glass_signal", {})):
         candidates = [REPO / "gas", REPO / "results/thick_plate/prod/work/gas"]
         if gas_source:
             candidates.insert(0, gas_source)
@@ -97,7 +98,7 @@ def run(binary, root, config, mode, snapshots=None, gas_source=None):
         return folder
     cf = folder / "config.json"
     cf.write_text(json.dumps(config, indent=2) + "\n")
-    if mode == "export":
+    if table:
         gas_dir = folder / "gas"
         gas_dir.mkdir(exist_ok=True)
         shutil.copy2(table, gas_dir / table.name)
@@ -408,6 +409,15 @@ def regression(args, base):
     run(args.binary,args.out,config,"probe")
 
 
+def trajectory_regression(args, base):
+    config = copy.deepcopy(base)
+    config["geometry"]["induction_gap_mm"] = .1
+    config["fields"]["e_induction_kvcm"] = 1.5
+    config["glass_signal"]["trajectory_probe"] = json.loads((REPO/"tests/data/glass_duplicate_terminal_point.json").read_text())
+    job = run(args.binary, args.out, config, "probe", gas_source=args.gas_source)
+    print(json.dumps({k: v for k, v in json.loads((job/"transport_probe.json").read_text()).items() if k != "normalization"}, indent=1))
+
+
 def validate_transport(args, base):
     report = []
     # Exercise the known failing seed first, then compare the unchanged seed.
@@ -437,7 +447,8 @@ def main():
         raise SystemExit(f"Interrupted by signal {signum}")
     signal.signal(signal.SIGTERM, interrupted)
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=["benchmark", "contact", "pilot", "sweep", "analyse", "validate-transport", "regression"])
+    p.add_argument("command", choices=["benchmark", "contact", "pilot", "sweep", "analyse", "validate-transport", "regression",
+                                       "trajectory-regression"])
     p.add_argument("--binary", type=Path, default=REPO/"build/thgem_sim")
     p.add_argument("--config", type=Path, default=REPO/"config/glass_signal.json")
     p.add_argument("--out", type=Path, default=REPO/"results/glass_signal/study")
@@ -457,6 +468,7 @@ def main():
             elif args.command == "contact": contact(args, base)
             elif args.command == "analyse": analyse(args.out)
             elif args.command == "regression": regression(args, base)
+            elif args.command == "trajectory-regression": trajectory_regression(args, base)
             elif args.command == "validate-transport": validate_transport(args, base)
             else: study(args, base)
         except BaseException as error:
