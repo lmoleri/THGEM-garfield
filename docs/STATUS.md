@@ -6,25 +6,26 @@ Conventions: *measured* = a number from a simulation output; *inferred* = a read
 
 ---
 
-## Current state (updated 2026-11-06)
+## Current state (updated 2026-11-08)
 
 **Question.** The measured anode/THGEM-top charge ratio drops at small induction gaps: 0.51 / 0.64 / 0.855 / 0.80 at d = 0.1 / 0.2 / 0.5 / 1.0 mm.
 
 **Detector as measured** (confirmed by Luca): 0.8 mm FR4 THGEM, Cu 50 µm per side, hole 0.5 mm, pitch 1.0 mm, rim 100 µm; drift gap 5 mm, Ed 1 kV/cm, ΔV 1.9 kV; Ar/CO₂ 93:7; **0.8 mm resistive-glass anode** on the readout pad; DCB209A CSPs (~1.9 nF), charge read from the preamp plateau; 2×2 cm area. Measured charge ≤ 100 fC/event (effective gain ≲ 2.8e3).
 
-**Best explanation (inferred).** The glass weighting effect. F = R_glass/R_copper = 0.52 / 0.64 / 0.80 at ε_r ≈ 6 (quick test, 2026-11-05), against 0.51 / 0.64 / 0.855. It matches both the size and the gap shape, and it is field-independent like the data. *Assumed:* glass ε_r and ρ.
+**Best explanation (inferred).** The glass weighting effect. F = R_glass/R_copper = 0.52 / 0.64 / 0.80 / 0.89 at ε_r ≈ 6 (0.59 / 0.70 / 0.84 / 0.91 at ε_r 8) for d = 0.1 / 0.2 / 0.5 / 1.0 mm (quick test, 2026-11-05 and 2026-11-08), against 0.51 / 0.64 / 0.855 / 0.80. It matches the size and the gap shape of the small-gap suppression, and it becomes small at 1 mm as the data requires; F cannot produce the slight 0.5 → 1 mm dip. The missing anode charge reappears on the THGEM bottom electrode (bottom/anode ≈ 0.7–0.9 at 0.1 mm with glass, ≈ 0 with copper): a direct test if the bottom can be read out. *Assumed:* glass ε_r and ρ.
 
 **What does not fit yet.**
-- The simulated copper baseline falls with gap: anode fraction 0.90 / 0.76 / 0.64 at 0.1 / 0.2 / 0.5 mm. The data divided by F implies a flat or rising baseline.
+- The simulated copper baseline falls with gap: anode fraction 0.90 / 0.76 / 0.64 at 0.1 / 0.2 / 0.5 mm (ΔV 1.9 kV), and still 0.882 / 0.799 / 0.686 at the measured gain (ΔV 1.77 kV, gain ≈ 3e3), so the fall is geometric, not a gain artefact. R_copper = 1.03 / 0.82 / 0.78 / 0.68, so the full R_glass is ≈ 0.6 at every gap (data 0.51 → 0.855 → 0.80). The data divided by F implies a flat or rising baseline.
 - The simulated gain (median ~1.25e4, mean ~2.7e4 at 0.2 mm) is 2–10× above the measured gain.
 
-**Running.**
-- `results/copper_baseline_gainmatched/`: copper anode at reduced ΔV (gain ≈ 3e3), d = 0.1 / 0.2 / 0.5 mm, 1000 paths each. Tests whether the copper loss is gain-driven. ETA 2026-11-06 ~16:00–16:30. Binary: `THGEM_corner` (see Provenance).
+**Running.** Nothing.
+
+**Follow-up (parked by Luca, 2026-11-08).** The real hole pattern is **hexagonal**; every simulation uses a square lattice. A square-pitch-0.93 mm proxy (same hole density) is prepared but not launched in `results/hex_proxy_p093/`; true hex needs a mirror-symmetric p/2 × (√3/2)p cell.
 
 **Not running.** A full glass production does not exist: `results/glass_signal/production_v3` was interrupted (SIGTERM) 102 s after its launch on 2026-11-05.
 
 **Open inputs from Luca.**
-1. Hole lattice: hexagonal or square? (The simulation uses square.)
+1. ~~Hole lattice~~: hexagonal (2026-11-08); the gas is Ar/CO₂ 93:7 only.
 2. Measured absolute top/anode charges, and the E_ind of the 0.51 / 0.64 / 0.855 series.
 3. Glass type, ε_r, resistivity, rear-contact type. Is there any bare-copper-anode measurement? It would measure F directly.
 4. Real copper corner radius (Cu etched from 150 µm to 50 µm).
@@ -50,6 +51,23 @@ Reading (inferred):
 Caveats:
 Data: results/…
 ```
+
+### 2026-11-08 — Glass-anode quick test: 1.0 mm point
+Setup: as the 2026-11-05 quick test (E_ind 1.5 kV/cm, ΔV 1.9 kV, 5 mm drift, K = 32, paired copper / glass replay, ε_r 4–12), d = 1.0 mm, 5 × 100 paths, seeds 631–635. Binary: `fb42296`. Gates: conservation ≤ 2.8e-15, partition residual ≤ 6.5e-13.
+Result (measured): R_copper = 0.681 [0.640, 0.727]; F = 0.837 / 0.885 / 0.911 / 0.927 / 0.938 at ε_r 4 / 6 / 8 / 10 / 12 (planar 0.833 / 0.882 / 0.909 / 0.926 / 0.938); R_glass = 0.570 / 0.602 / 0.620 / 0.631 / 0.639. Bottom/top: copper −0.355, glass ε_r 8 −0.414. ESS 163/500. F is the same at 5 / 10 / 20 µs and for fixed / mobile attachment.
+Reading (inferred): at 1 mm the glass matters little (F ≈ 0.9) and the copper baseline dominates; R_glass ≈ 0.62 is well below the measured 0.80.
+Data: `results/glass_signal/quicktest_eind1.5/` (chunks `E1.5_ig1.00_s63x`), `summary_E1.5_t10us.csv`, `bottom_channel_E1.5.csv`.
+
+### 2026-11-06 — Gain-matched copper baseline
+Question: is the copper-baseline fall an artefact of the simulated gain being ~10× above the measured one?
+Setup: as the copper-baseline scan, ΔV 1.77 kV (probes at 1.60–1.80 kV: gain halves per 50 V), E_ind 1.5 kV/cm, d = 0.1 / 0.2 / 0.5 mm, 1800 paths per gap (1000-path job + 2 × 400). Binary: `THGEM_corner` (unversioned).
+Result (measured): mean gain 4.5e3 / 3.1e3 / 2.6e3; anode fraction (excluding attachment) 0.882 [0.870, 0.894] / 0.799 [0.782, 0.816] / 0.686 [0.666, 0.706], against 0.899 / 0.758 / 0.644 at 1.9 kV. Bottom-Cu-underside loss halves (0.114 → 0.034 at 0.2 mm, 0.208 → 0.104 at 0.5 mm) while the lowest-100 µm-wall loss grows (0.107 → 0.129, 0.114 → 0.153). ESS ~600 per gap.
+Reading (inferred): the fall persists at the measured gain; it is geometric.
+Data: `results/copper_baseline_gainmatched/` (`pooled_summary.csv`)
+
+### 2026-11-05 — Glass quick test: THGEM bottom signal
+From the same replays: with glass the anode charge the glass removes reappears on the THGEM bottom electrode, bottom/top ≈ −0.43 to −0.50 at 0.1–0.2 mm (ε_r 6–8), against ≈ 0 (0.1 mm) and −0.21 / −0.26 (0.2 / 0.5 mm) for copper. The four channels sum to zero within 3e-14.
+Data: `results/glass_signal/quicktest_eind1.5/bottom_channel_E1.5.csv`
 
 ### 2026-11-06 — Copper-anode baseline scan
 Question: is the fall of the copper baseline with gap real, or small-sample noise?
