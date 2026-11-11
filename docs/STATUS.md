@@ -6,17 +6,18 @@ Conventions: *measured* = a number from a simulation output; *inferred* = a read
 
 ---
 
-## Current state (updated 2026-11-08)
+## Current state (updated 2026-11-10)
 
 **Question.** The measured anode/THGEM-top charge ratio drops at small induction gaps: 0.51 / 0.64 / 0.855 / 0.80 at d = 0.1 / 0.2 / 0.5 / 1.0 mm.
 
-**Detector as measured** (confirmed by Luca): 0.8 mm FR4 THGEM, Cu 50 µm per side, hole 0.5 mm, pitch 1.0 mm, rim 100 µm; drift gap 5 mm, Ed 1 kV/cm, ΔV 1.9 kV; Ar/CO₂ 93:7; **0.8 mm resistive-glass anode** on the readout pad; DCB209A CSPs (~1.9 nF), charge read from the preamp plateau; 2×2 cm area. Measured charge ≤ 100 fC/event (effective gain ≲ 2.8e3).
+**Detector as measured** (confirmed by Luca): 0.8 mm FR4 THGEM, **Cu 90 µm on both faces** (2026-11-10; every run before 2026-11-10 used 50 µm), hole 0.5 mm, pitch 1.0 mm, rim 100 µm; drift gap 5 mm, Ed 1 kV/cm, ΔV 1.9 kV; Ar/CO₂ 93:7; **0.8 mm resistive-glass anode** on the readout pad; DCB209A CSPs (~1.9 nF), charge read from the preamp plateau; 2×2 cm area. Induction gap: the spacers set the nominal d between FR4 surfaces (THGEM FR4 to glass), so the **gas gap is d − 90 µm** (10 / 110 / 410 / 910 µm), and V_ind = E_ind × d_nominal, so the real gas field is E_ind × d / (d − 0.09 mm). Measured THGEM-top charge per event (Luca's top_charge.pdf, E_ind 1.5): 0.80 / 0.83 / 0.30 / 0.24 pC at d = 0.1 / 0.2 / 0.5 / 1.0 mm (rising with E_ind at small gaps); the earlier "≤ 100 fC/event, gain ≲ 2.8e3" was wrong.
 
-**Best explanation (inferred).** The glass weighting effect. F = R_glass/R_copper = 0.52 / 0.64 / 0.80 / 0.89 at ε_r ≈ 6 (0.59 / 0.70 / 0.84 / 0.91 at ε_r 8) for d = 0.1 / 0.2 / 0.5 / 1.0 mm (quick test, 2026-11-05 and 2026-11-08), against 0.51 / 0.64 / 0.855 / 0.80. It matches the size and the gap shape of the small-gap suppression, and it becomes small at 1 mm as the data requires; F cannot produce the slight 0.5 → 1 mm dip. The missing anode charge reappears on the THGEM bottom electrode (bottom/anode ≈ 0.7–0.9 at 0.1 mm with glass, ≈ 0 with copper): a direct test if the bottom can be read out. *Assumed:* glass ε_r and ρ.
+**Best explanation (inferred).** The glass weighting effect is still the leading explanation of the small-gap suppression. In the real geometry (Cu 90 µm, gas gap d − 90 µm, ΔV 1.9 kV; 2026-11-10..11 log entry), F = R_glass/R_copper = 0.27–0.31 / 0.53–0.60 / 0.77–0.81 / 0.88–0.90 at ε_r 6–8 for d = 0.1 / 0.2 / 0.5 / 1.0 mm, against measured R 0.51 / 0.64 / 0.855 / 0.80. It gives the gap shape of the suppression between 0.2 and 1.0 mm, but **0.1 mm is a clear miss** (R_glass 0.29–0.32 vs 0.51, gain 1.3e5): the real 0.1 mm gap is not a clean, uncharged 10 µm gap. The missing anode charge reappears on the THGEM bottom electrode (3.2–3.3 / 0.7–0.8 / 0.3 / 0.3 pC per event with glass): a direct test if the bottom can be read out. *Assumed:* glass ε_r and ρ. *Superseded (Cu 50 µm, gap from Cu surface):* F 0.52 / 0.64 / 0.80 / 0.89 at ε_r 6.
 
 **What does not fit yet.**
-- The simulated copper baseline falls with gap: anode fraction 0.90 / 0.76 / 0.64 at 0.1 / 0.2 / 0.5 mm (ΔV 1.9 kV), and still 0.882 / 0.799 / 0.686 at the measured gain (ΔV 1.77 kV, gain ≈ 3e3), so the fall is geometric, not a gain artefact. R_copper = 1.03 / 0.82 / 0.78 / 0.68, so the full R_glass is ≈ 0.6 at every gap (data 0.51 → 0.855 → 0.80). The data divided by F implies a flat or rising baseline.
-- The simulated gain (median ~1.25e4, mean ~2.7e4 at 0.2 mm) is 2–10× above the measured gain.
+- The simulated copper baseline falls with gap: anode fraction 0.98 / 0.84 / 0.66 / 0.57 at d = 0.1 / 0.2 / 0.5 / 1.0 mm (Cu 90 µm, real gas gaps, ΔV 1.9 kV), with the loss increasingly on the bottom-Cu underside (0.001 → 0.25) and 0.01 → 0.13 on the lowest 100 µm of the FR4 wall. R_copper = 1.05 / 0.92 / 0.80 / 0.67, so R_glass sits ~0.15–0.2 below the data at 0.2–1.0 mm. *Superseded (Cu 50 µm):* 0.90 / 0.76 / 0.64 at 1.9 kV, 0.882 / 0.799 / 0.686 at 1.77 kV.
+- Charging-up of the FR4 does not explain the falling copper baseline: clearing the wall needs 10–20 nC/cm², which kills the gain; the measured gain (top charge, 2026-11-10) is only ~2× below the uncharged simulation, not ~10× as assumed in the 2026-11-09 log entry, which leaves even less room for wall charge than the ~1–2 nC/cm² state (wall E·n −10–15 %) allowed there.
+- The simulated gain is too high: the simulated THGEM-top charge per event (Cu 90 µm, real gaps, ΔV 1.9 kV) is 1.7–2.8× above the measured one at 0.2–1.0 mm (1.42 / 0.77 / 0.68 vs 0.83 / 0.30 / 0.24 pC) and 5.6× at 0.1 mm (4.45 vs 0.80 pC). *Superseded:* "2–10× above" (Cu 50 µm, against the wrong ≤ 100 fC figure).
 
 **Running.** Nothing.
 
@@ -51,6 +52,47 @@ Reading (inferred):
 Caveats:
 Data: results/…
 ```
+
+### 2026-11-10..11 — Real geometry: Cu 90 µm, gas gap = nominal − 90 µm, E_ind × nominal/real, ΔV 1.9 kV
+Facts (Luca, 2026-11-10): the spacers reference the FR4 (THGEM FR4 to the glass), not the copper; the copper is 90 µm on both faces; the induction voltage is set as E_ind × d_nominal. So the gas gap is d − 90 µm and the gas field is E_ind × d / (d − 0.09 mm). **All earlier log entries used Cu 50 µm and took d as the gas gap from the Cu surface at E_ind as set.** Luca's top_charge.pdf gives the measured top charge (0.80 / 0.83 / 0.30 / 0.24 pC at 0.1 / 0.2 / 0.5 / 1.0 mm, E_ind 1.5), so the simulated gain at 1.9 kV is ~2× high, not 10–30×.
+Setup: ΔV 1.9 kV, Ed 1 kV/cm, Ar/CO₂ 93:7 (n110 table), FR4 0.8 mm, Cu 90 µm, hole 0.5 mm, rim 100 µm, square pitch 1 mm, production mesh (100 µm, 3–5 per primitive), raw-neBEM weighted mean avalanches. Gas gaps 0.010 / 0.110 / 0.410 / 0.910 mm at 15 / 2.727 / 1.829 / 1.648 kV/cm. Copper baseline: `THGEM_corner` binary (unversioned), recipe of `copper_baseline_gainmatched`, 3 × 600 paths per gap, seeds 979–981 / 970–972 / 973–975 / 976–978. Glass quick test: binary `fb42296` (`quicktest_gasgap/bin`, provenance copied), recipe of `quicktest_eind1.5` (5 × 100-path exports, paired copper + glass ε_r 4–12 replays, read at 10 µs, mobile attachment), seeds 661–665 / 671–675 / 681–685 / 691–695; snapshot residuals ≤ 5e-15. 10 µm mesh check (`results/gap10um_meshcheck/`): production mesh (2021 elements) vs 20 µm / 3–40 (13 938 elements, 4.3 h, swapped the Mac) differ ≤ 3.3 % in the gap field; under the copper both give 15 kV/cm within 1–3 %.
+Result (measured), copper baseline (anode fraction excl. attachment, 68 % bootstrap):
+
+| Nominal d (gas gap, field) | Anode fraction | ESS | Mean / median gain | Lowest 100 µm FR4 wall | Wall above | Bottom Cu |
+|---|---|---|---|---|---|---|
+| 0.1 mm (10 µm, 15 kV/cm) | 0.984 [0.981, 0.986] | 556 | 1.34e5 / 7.8e4 | 0.012 | 0.004 | 0.001 |
+| 0.2 mm (110 µm, 2.73 kV/cm) | 0.838 [0.820, 0.857] | 455 | 3.6e4 / 1.8e4 | 0.080 | 0.030 | 0.048 |
+| 0.5 mm (410 µm, 1.83 kV/cm) | 0.656 [0.632, 0.681] | 478 | 2.4e4 / 1.3e4 | 0.130 | 0.042 | 0.172 |
+| 1.0 mm (910 µm, 1.65 kV/cm) | 0.568 [0.546, 0.592] | 488 | 2.2e4 / 1.2e4 | 0.135 | 0.043 | 0.254 |
+
+Result (measured), glass quick test against data (per-event charge × 227 primaries, 10 µs; glass ε_r 6–8; measured in brackets; R_Cu = copper-anode replay):
+
+| Nominal d | Top charge [pC] | R_glass | R_Cu | F |
+|---|---|---|---|---|
+| 0.1 mm | 4.44–4.47 (0.80) | 0.29–0.32 (0.51) | 1.05 | 0.27–0.31 |
+| 0.2 mm | 1.42 (0.83) | 0.49–0.55 (0.64) | 0.92 | 0.53–0.60 |
+| 0.5 mm | 0.77 (0.30) | 0.61–0.65 (0.855) | 0.80 | 0.77–0.81 |
+| 1.0 mm | 0.68 (0.24) | 0.59–0.60 (0.80) | 0.67 | 0.88–0.90 |
+
+Bootstrap 68 %: charges ±6–10 %, R ±5 % (±1 % at 0.1 mm), F ±0.002 (paired). Glass bottom charge (ε_r 6–8): 3.2–3.3 / 0.68–0.77 / 0.29–0.32 / 0.29–0.30 pC.
+Reading (inferred):
+- (a) The copper baseline still falls with gap, 0.98 → 0.84 → 0.66 → 0.57, and the loss moves increasingly onto the bottom-Cu underside (0.001 → 0.25); the real geometry does not remove it.
+- (b) At 0.2–1.0 mm the top-charge shape is now data-like (steep rise below 0.5 mm, flat above; 0.2/0.5 ratio 1.86 against 2.8 measured, 1.25 with the old geometry) but 1.7–2.8× high; R_glass is ~0.15–0.2 low throughout, from the falling copper baseline.
+- (c) 0.1 mm is a clear miss: gain 1.3e5 (the field stays ~16 kV/cm from the hole into the 10 µm gap), top 4.5 against 0.8 pC, R 0.29–0.32 against 0.51. The real 0.1 mm gap is not a clean, uncharged 10 µm gap. Candidates: flatness / partial contact of copper and glass; glass surface charging (only 15 V across the gap; ~1 pC per event on ~1 mm² of glass over a ~0.9 pF gap is ≈ 1 V per event, which accumulates if τ = ε0 ε_r ρ is long against the local event spacing, e.g. τ ≳ 0.1 s, ρ ≳ 1e11 Ω·cm); discharges or other gain limits.
+Caveats: square lattice (real is hex); uncharged FR4 and glass; nominal glass ε_r / ρ; weighted paths heavy-tailed (ESS 74–189 for the glass top charge); 0.1 mm assumes a uniform 10 µm gap.
+Data: `results/copper_baseline_gasgap/` (`runs/dV1900_cu90_*`, `pool_cu90.py`, `summary_cu90.csv`; Cu 50 µm starts in `stopped_cu50/`), `results/glass_signal/quicktest_gasgap/` (`chunks/`, `summary_cu90.py`, `summary_cu90.csv`; Cu 50 µm starts in `stopped_cu50/`), `results/gap10um_meshcheck/`.
+
+### 2026-11-09 — Fully charged FR4 limit (zero normal field on the insulator), 0.5 mm, copper anode
+Question (Luca): does the falling copper baseline come from electrons ending on uncharged FR4, which charging-up equilibrium would prevent?
+Check of existing data (measured): in the gain-matched baseline only about half the extra loss from 0.1 to 0.5 mm lands on FR4 (FR4 wall 0.116 → 0.210, bottom-Cu underside 0.001 → 0.104). Even a perfect FR4 shield bounds the anode fraction at 1 − Cu loss = 0.999 / 0.966 / 0.896, so it would still fall.
+Old charging run (`results/charging_08`, reread): the lowest wall zone kept collecting 0.10–0.20 net e⁻ per avalanche e⁻ even at σ = −4.4 nC/cm²; the wall field only scaled down with the hole field. Inferred cause: a uniformly charged band on a cylinder makes almost no radial field inside (Gauss), so only dσ/dz bends drift lines off the wall. The 6-zone run could not test the hypothesis.
+Method: finer mesh (50 µm wall elements, 3207 elements), 12 wall bands + 2 rim faces, one neBEM charged solve per zone (σ = 1 nC/cm²) → linear response of E·n at probes 10 µm off the FR4 (y = 0 raw-field slice) → least squares for E·n = 0. Binary: `THGEM_corner` (unversioned). Driver: `results/charged_equilibrium/equilibrium_driver.py`, re-fit `solve_v2.py`.
+Result (measured):
+- The unbounded fit needs ±1–2 µC/cm² with alternating signs (condition number 5e4). Its verification run failed (hole field 18 → 0.7 kV/cm; wall E·n 0.3–3 kV/cm against ~15 V/cm predicted). Cause, checked: neBEM maps the charges correctly (ReTriM.c InitChargingUp; zone totals 0.977× requested), but random deposit points leave 10–20 % per-element scatter, and the ill-conditioned fit amplifies it.
+- A bounded re-fit from the same responses (ridge fallback; scipy is missing on the Mac) at max |σ| = 2 / 5 / 10 / 20 nC/cm²: lower-wall E·n 3.5–3.8 / 3.1–3.5 / 1.5–2.1 / 0.5–1.8 kV/cm (uncharged 4.0–4.2), on-axis hole field 0.86 / 0.74 / 0.33 / 0.39× uncharged. With the hole field held fixed, the fit cannot reduce E·n at all.
+Reading (inferred): clearing the wall needs 10–20 nC/cm² and removes the gain. The measured gain at 1.9 kV is only ~10× below the uncharged simulation (hole field ~7 % lower), which allows at most the ~1–2 nC/cm² state, where wall E·n drops only 10–15 %. Within this model the real detector cannot be in the fully charged state, and charging cannot explain the falling copper baseline. Luca chose to stop here (2026-11-10); the gain-consistent charged avalanche test (ΔV 1.9 kV, scaled σ, gain ≈ 3e3) was not run.
+Caveats: azimuthally uniform zones; square lattice (real is hex); "no field lines on FR4" is a proxy for dynamic equilibrium; no avalanche run in a charged field; ridge fits rather than true bounded fits; rim-face responses took 3.6 h each (cause not found). If part of the 10× gain gap comes from gas or Penning settings, the real charging is smaller still.
+Data: `results/charged_equilibrium/` (0.5 mm responses, solution.json, solve_v2_scan.json; 0.1 / 0.2 mm uncharged bases with caches at 1770 V, no responses).
 
 ### 2026-11-08 — Glass-anode quick test: 1.0 mm point
 Setup: as the 2026-11-05 quick test (E_ind 1.5 kV/cm, ΔV 1.9 kV, 5 mm drift, K = 32, paired copper / glass replay, ε_r 4–12), d = 1.0 mm, 5 × 100 paths, seeds 631–635. Binary: `fb42296`. Gates: conservation ≤ 2.8e-15, partition residual ≤ 6.5e-13.
