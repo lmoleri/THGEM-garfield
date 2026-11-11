@@ -1,40 +1,33 @@
 # THGEM study status
 
-Living document. The **Current state** section is rewritten whenever it changes; the **Log** below only grows (newest first). Each log entry records what binary produced it, so a result can be traced to code.
+Two parts: a short **current state** (what is running, what is waiting, provenance problems), rewritten whenever it changes, and the **log** (newest first), which only grows. Each log entry records the binary, seeds and data paths of a run, so a result can be traced to code.
 
-Conventions: *measured* = a number from a simulation output; *inferred* = a reading of those numbers; *assumed* = an input not yet confirmed. Uncertainties are 68 % bootstrap unless stated; weighted-path results are heavy-tailed, so quote the ESS.
+The study itself (question, model, results against the lab data, what is ruled out, open questions) is written up once in [`anode_charge_fraction.md`](anode_charge_fraction.md). Read that first; this file does not repeat it.
+
+Labels: *lab* = measured on the detector; *sim* = from a simulation output; *inferred* = a reading of those numbers; *assumed* = an input not yet confirmed. Simulation intervals are 68 % bootstrap; weighted-path results are heavy-tailed, so quote the ESS. **Log entries before 2026-11-10 use Cu 50 µm and take the nominal gap as the gas gap from the copper;** their numbers are superseded by the 2026-11-10..11 entry and are kept as a record only.
 
 ---
 
-## Current state (updated 2026-11-10)
+## Current state (updated 2026-11-11)
 
-**Question.** The measured anode/THGEM-top charge ratio drops at small induction gaps: 0.51 / 0.64 / 0.855 / 0.80 at d = 0.1 / 0.2 / 0.5 / 1.0 mm.
-
-**Detector as measured** (confirmed by Luca): 0.8 mm FR4 THGEM, **Cu 90 µm on both faces** (2026-11-10; every run before 2026-11-10 used 50 µm), hole 0.5 mm, pitch 1.0 mm, rim 100 µm; drift gap 5 mm, Ed 1 kV/cm, ΔV 1.9 kV; Ar/CO₂ 93:7; **0.8 mm resistive-glass anode** on the readout pad; DCB209A CSPs (~1.9 nF), charge read from the preamp plateau; 2×2 cm area. Induction gap: the spacers set the nominal d between FR4 surfaces (THGEM FR4 to glass), so the **gas gap is d − 90 µm** (10 / 110 / 410 / 910 µm), and V_ind = E_ind × d_nominal, so the real gas field is E_ind × d / (d − 0.09 mm). Measured THGEM-top charge per event (Luca's top_charge.pdf, E_ind 1.5): 0.80 / 0.83 / 0.30 / 0.24 pC at d = 0.1 / 0.2 / 0.5 / 1.0 mm (rising with E_ind at small gaps); the earlier "≤ 100 fC/event, gain ≲ 2.8e3" was wrong.
-
-**Best explanation (inferred).** The glass weighting effect is still the leading explanation of the small-gap suppression. In the real geometry (Cu 90 µm, gas gap d − 90 µm, ΔV 1.9 kV; 2026-11-10..11 log entry), F = R_glass/R_copper = 0.27–0.31 / 0.53–0.60 / 0.77–0.81 / 0.88–0.90 at ε_r 6–8 for d = 0.1 / 0.2 / 0.5 / 1.0 mm, against measured R 0.51 / 0.64 / 0.855 / 0.80. It gives the gap shape of the suppression between 0.2 and 1.0 mm, but **0.1 mm is a clear miss** (R_glass 0.29–0.32 vs 0.51, gain 1.3e5): the real 0.1 mm gap is not a clean, uncharged 10 µm gap. The missing anode charge reappears on the THGEM bottom electrode (3.2–3.3 / 0.7–0.8 / 0.3 / 0.3 pC per event with glass): a direct test if the bottom can be read out. *Assumed:* glass ε_r and ρ. *Superseded (Cu 50 µm, gap from Cu surface):* F 0.52 / 0.64 / 0.80 / 0.89 at ε_r 6.
-
-**What does not fit yet.**
-- The simulated copper baseline falls with gap: anode fraction 0.98 / 0.84 / 0.66 / 0.57 at d = 0.1 / 0.2 / 0.5 / 1.0 mm (Cu 90 µm, real gas gaps, ΔV 1.9 kV), with the loss increasingly on the bottom-Cu underside (0.001 → 0.25) and 0.01 → 0.13 on the lowest 100 µm of the FR4 wall. R_copper = 1.05 / 0.92 / 0.80 / 0.67, so R_glass sits ~0.15–0.2 below the data at 0.2–1.0 mm. *Superseded (Cu 50 µm):* 0.90 / 0.76 / 0.64 at 1.9 kV, 0.882 / 0.799 / 0.686 at 1.77 kV.
-- Charging-up of the FR4 does not explain the falling copper baseline: clearing the wall needs 10–20 nC/cm², which kills the gain; the measured gain (top charge, 2026-11-10) is only ~2× below the uncharged simulation, not ~10× as assumed in the 2026-11-09 log entry, which leaves even less room for wall charge than the ~1–2 nC/cm² state (wall E·n −10–15 %) allowed there.
-- The simulated gain is too high: the simulated THGEM-top charge per event (Cu 90 µm, real gaps, ΔV 1.9 kV) is 1.7–2.8× above the measured one at 0.2–1.0 mm (1.42 / 0.77 / 0.68 vs 0.83 / 0.30 / 0.24 pC) and 5.6× at 0.1 mm (4.45 vs 0.80 pC). *Superseded:* "2–10× above" (Cu 50 µm, against the wrong ≤ 100 fC figure).
+**Headline (inferred).** The glass weighting factor gives a suppression of the right kind, but the full model does not reproduce R: the simulated copper baseline falls with gap, so R_glass is 0.1–0.25 below the data at 0.2–1.0 mm, and the 0.1 mm point is a clear miss. Details: [`anode_charge_fraction.md`](anode_charge_fraction.md) §4.
 
 **Running.** Nothing.
 
-**Follow-up (parked by Luca, 2026-11-08).** The real hole pattern is **hexagonal**; every simulation uses a square lattice. A square-pitch-0.93 mm proxy (same hole density) is prepared but not launched in `results/hex_proxy_p093/`; true hex needs a mirror-symmetric p/2 × (√3/2)p cell.
+**Parked by Luca.** Hexagonal lattice (2026-11-08): proxy prepared, not launched, in `results/hex_proxy_p093/`; true hex needs a mirror-symmetric p/2 × (√3/2)p cell. Gain-consistent charged-FR4 avalanche (2026-11-10). Further work on glass surface charging (2026-11-11).
 
-**Not running.** A full glass production does not exist: `results/glass_signal/production_v3` was interrupted (SIGTERM) 102 s after its launch on 2026-11-05.
+**Not available.** A full glass production does not exist: `results/glass_signal/production_v3` was stopped 102 s after its launch on 2026-11-05.
 
 **Open inputs from Luca.**
-1. ~~Hole lattice~~: hexagonal (2026-11-08); the gas is Ar/CO₂ 93:7 only.
-2. Measured absolute top/anode charges, and the E_ind of the 0.51 / 0.64 / 0.855 series.
-3. Glass type, ε_r, resistivity, rear-contact type. Is there any bare-copper-anode measurement? It would measure F directly.
-4. Real copper corner radius (Cu etched from 150 µm to 50 µm).
+1. R at E_ind 1.5 kV/cm for 0.5 and 1.0 mm (the quoted 0.855 / 0.80 may be the E_ind 2.0 series), and absolute anode charges.
+2. Glass ε_r and rear-contact type (ρ = 1e10 Ω·cm given 2026-11-11). Is there any bare-copper-anode measurement?
+3. Real copper corner radius (Cu etched from 150 µm).
+4. Size of the irradiated spot (collimation), and whether the preamp calibration was done with the detector connected at each gap.
 
 **Provenance problems to fix.**
-- `results/copper_baseline*` uses `../THGEM_corner/build/thgem_sim` (built 2026-10-29). That source tree is not under git, and its `botCornerRoundUm` option is in no commit.
-- Branch `codex/glass-signal-10us` is not pushed.
-- Drivers live only under the gitignored `results/`: `charging_08/analysis/charging_driver_v2.py`, `thick_plate/gastools/merge_text.py`, `copper_baseline/{job.sh,analyse.py}`, `glass_signal/quicktest_eind1.5/chunk_job.sh`.
+- `results/copper_baseline*` and `results/charged_equilibrium` use `../THGEM_corner/build/thgem_sim` (built 2026-10-29). That source tree is not under git, and its `botCornerRoundUm` option is in no commit.
+- Branch `codex/glass-signal-10us` is not pushed (its commits are on `main`).
+- Drivers live only under the gitignored `results/`: `charging_08/analysis/charging_driver_v2.py`, `thick_plate/gastools/merge_text.py`, `copper_baseline/{job.sh,analyse.py}`, `copper_baseline_gasgap/pool_cu90.py`, `glass_signal/quicktest_eind1.5/chunk_job.sh`, `glass_signal/quicktest_gasgap/summary_cu90.py`, `charged_equilibrium/{equilibrium_driver.py,solve_v2.py}`.
 - The dense n110 Ar/CO₂ 93:7 gas table used since 2026-11-01 is not in `gas/`.
 
 ---
@@ -52,6 +45,19 @@ Reading (inferred):
 Caveats:
 Data: results/…
 ```
+
+### 2026-11-11 — Glass resistivity and glass surface charging at 0.1 mm
+Fact (Luca): glass volume resistivity ρ = 1e10 Ω·cm.
+Estimate (no simulation): the mean potential of the glass surface is J·ρ·b (b = 0.8 mm). With Q_anode ≈ 0.41 pC/event (lab R × Q_top at 0.1 mm) at 10 Hz, it is ≈ 0.3 V for a 1 mm² irradiated spot and < 1 mV over 4 cm², against 15 V across the 10 µm gap. The relaxation time of a charge facing the 10 µm gap is ρ ε0 (ε_r + b/d) ≈ 80 ms at ε_r 7 (the 6 ms first quoted, ε0 ε_r ρ, ignores the gap); the mean potential does not depend on it.
+Reading (inferred): glass surface charging cannot explain the 0.1 mm miss unless the irradiated spot is ≪ 1 mm². Luca asked to stop work on this hypothesis.
+
+### 2026-11-10 — Readout impedance (anode charge diverted to the grounded bottom through C_AB)
+Question (Luca): is part of the anode signal lost because the anode preamp's input impedance is high compared with that of the anode–bottom capacitance C_AB?
+Method (estimate, no simulation): capacitive divider at the anode node, Q_CSA / Q = C_in,eff / (C_in,eff + C_AB). C_in,eff ≈ 1.84 nF (DCB209A: 2 nF HV coupling in series with 100 nF and A0·Cf ≈ 30 nF); the 40 MΩ bias path does not compete. C_AB = ε0 A (open fraction 0.77) / (d_gas + b/ε_r), A = 4 cm², fringing ignored (±30 % at ≥ 0.5 mm). Both impedances are capacitive, so the ratio is frequency-independent.
+Result: first done with metal gap d − 50 µm (Cu 50 µm), then redone here for the real gas gap d − 90 µm. For glass ε_r 6–8, C_AB = 19–25 / 11–13 / 5.0–5.3 / 2.6–2.7 pF at d = 0.1 / 0.2 / 0.5 / 1.0 mm, a loss of 1.0–1.3 / 0.6–0.7 / 0.3 / 0.15 %. A copper anode would see 273 pF and 13 % at 0.1 mm (1.3 % at 0.2 mm), but the measurements used glass. The data need ~40 % at 0.1 mm, i.e. C_in,eff ≈ 30–40 pF, ~50× below the manual.
+Reading (inferred): ruled out within the manual values. The loss has the same functional form as the glass factor, so the gap shape cannot separate them, and a bottom readout cannot either. Decisive test: preamp test pulse into the anode channel with the detector connected, at 0.1 mm vs ≥ 1 mm.
+Caveats: preamp values from the manual, not measured; cable capacitance and any input protection unknown; if the calibration was done in situ at each gap, an impedance effect would already be calibrated out.
+Data: project files `readout_impedance/` (estimate scripts).
 
 ### 2026-11-10..11 — Real geometry: Cu 90 µm, gas gap = nominal − 90 µm, E_ind × nominal/real, ΔV 1.9 kV
 Facts (Luca, 2026-11-10): the spacers reference the FR4 (THGEM FR4 to the glass), not the copper; the copper is 90 µm on both faces; the induction voltage is set as E_ind × d_nominal. So the gas gap is d − 90 µm and the gas field is E_ind × d / (d − 0.09 mm). **All earlier log entries used Cu 50 µm and took d as the gas gap from the Cu surface at E_ind as set.** Luca's top_charge.pdf gives the measured top charge (0.80 / 0.83 / 0.30 / 0.24 pC at 0.1 / 0.2 / 0.5 / 1.0 mm, E_ind 1.5), so the simulated gain at 1.9 kV is ~2× high, not 10–30×.
@@ -143,4 +149,4 @@ R = 0 / 10 / 25 / 45 µm. Only R45 gives flat extraction, and every R stays ~0.2
 Data: `results/corner_rounding/`
 
 ### ≤ 2026-10-29 — 0.4 mm-plate investigation
-See `docs/extraction_ratio_investigation.md` §1–16: grid edge artifact, rim charging, mean-avalanche mode, ion collection, collected-charge ratio. Last commit on `main`: `cbd1178`.
+See `extraction_ratio_investigation.md` §1–16 (historical): grid edge artifact, rim charging, mean-avalanche mode, ion collection, collected-charge ratio. Last commit on `main`: `cbd1178`.

@@ -131,10 +131,17 @@ runner records SHA-256 identities of the executable and the shared snapshots.
 
 ## Study and interpretation
 
+This section describes the runner's full production sweep, which was never
+completed. The results in use come from quick tests with this method; they and
+their comparison with the data are in
+[`anode_charge_fraction.md`](anode_charge_fraction.md).
+
 `config/glass_signal.json` sets 0.8 mm FR4, 0.5 mm holes, 1 mm square pitch,
-100 µm rim, 50 µm copper, and 5 mm drift gap. The gap remains measured from the
-outer bottom-copper face to the collection surface. This differs from possible
-experimental FR4-face gap conventions and does not implement a hexagonal lattice.
+100 µm rim, 50 µm copper, and 5 mm drift gap. The gap is measured from the
+outer bottom-copper face to the collection surface. The real detector has 90 µm
+copper and a gas gap of nominal − 90 µm (spacers reference the FR4), and a
+hexagonal lattice; the real-geometry quick tests override copper and gap, the
+lattice stays square.
 
 Production sweeps gaps 0.1/0.2/0.5/1/2 mm, induction fields 1.5/2/2.5 kV/cm,
 and relative permittivities 4/6/8/10/12, without per-gap fits. It starts with 500
@@ -181,7 +188,8 @@ The mobile-attachment pilot gives F approximately 0.558 at 0.1 mm and 0.952 at
 2 mm. These values demonstrate functioning paired replay and a possible
 gap-dependent response in the controlled model. They **do not establish the
 effect's population average, numerical convergence, or agreement with data**.
-The pilot's scientific conclusion is **inconclusive**.
+The pilot's scientific conclusion is **inconclusive**. It is superseded by the 500-path quick tests
+(see [`anode_charge_fraction.md`](anode_charge_fraction.md)).
 
 See `docs/data/glass_signal_validation_pilot.csv` for both attachment models
 and all observation times.

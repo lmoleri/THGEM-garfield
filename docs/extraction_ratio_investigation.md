@@ -1,18 +1,11 @@
 # Investigation: Anode/THGEM-top charge ratio vs induction gap
 
-**Status:** compared as **collected charge against collected charge** (§14), the simulation now
-matches the measurement at large induction gaps and disagrees only at small ones. Two corrections
-got it there:
-1. The THGEM-top collects only ~41–47 % of the avalanche ions; the rest backflow to the drift
-   cathode or land on the dielectric. The earlier comparisons used the electron extraction fraction,
-   which silently assumed the top collects all of them.
-2. Earlier, a field-sampling artifact of the uniform transport grid at the thin copper edge (§7) had
-   corrupted the simulated extraction.
-
-What remains is a **small-gap excess**: the simulated ratio is 4.2× the measured at 0.1 mm, 2.7× at
-0.2 mm, 1.4× at 0.5 mm and 1.25× at 1.0 mm. Ions reaching the anode (§13), avalanche space charge
-(§13a) and a local-field transport artifact (§12) are excluded. The next test is a bench calibration
-of the anode charge amplifier at each gap: its input capacitance grows as 1/gap.
+> **Historical record (0.4 mm plate, thinner copper, copper anode), superseded.**
+> The real detector has a 0.8 mm plate, 90 µm copper and a resistive-glass anode, so the numbers
+> and the status below are no longer current. Still valid and reused: the transport-grid artefact
+> at the copper edge (§7, fixed by `fields.use_raw_nebem`), the mean-avalanche mode (§12) and the
+> exclusions of space charge, attachment and ions on the anode (§4, §6, §13). The current study is
+> [`anode_charge_fraction.md`](anode_charge_fraction.md).
 
 This note records the full investigation into reproducing, in the Garfield++ THGEM simulation,
 a lab measurement of the **Anode/THGEM-top charge ratio as a function of the induction gap**.

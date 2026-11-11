@@ -1,5 +1,7 @@
 # THGEM Detector Simulation
 
+Study write-up (anode charge fraction vs induction gap): [`docs/anode_charge_fraction.md`](docs/anode_charge_fraction.md); run log: [`docs/STATUS.md`](docs/STATUS.md).
+
 The opt-in [contacted-glass signal study](docs/glass_signal_hypothesis.md)
 exports timed, charge-balanced transport records and replays identical records
 with metal or glass-backed readout weighting potentials at 10 µs. The conductor
