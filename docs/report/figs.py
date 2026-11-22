@@ -24,7 +24,22 @@ cu=[r for r in cu if r["set"]=="Cu90_dV1900"]
 gl=list(csv.DictReader(open(os.path.join(ROOT,"results/glass_signal/quicktest_gasgap/summary_cu90.csv"))))
 nom=np.array([0.1,0.2,0.5,1.0]); gas=nom-0.09
 def arm(a,key): return np.array([float(r[key]) for r in gl if r["arm"]==a])
-labR=np.array([0.51,0.64,0.855,0.80]); labRall=([0.1,0.2,0.5,1,2],[0.51,0.64,0.855,0.80,0.755])
+def lab(name):
+    rows=list(csv.DictReader(open(os.path.join(HERE,"lab_data",name+".csv"))))
+    out={}
+    for e in ("1.5","2.0","2.5"):
+        rr=[r for r in rows if r["E_ind_kV_cm"]==e]
+        out[e]={k:np.array([float(r[k]) for r in rr]) for k in ("gap_nominal_mm","value","errbar_halfwidth","box_halfwidth")}
+    return out
+LR,LT,LA=lab("charge_ratio"),lab("top_charge"),lab("anode_charge")
+labR=LR["1.5"]["value"][:4]; labRbox=LR["1.5"]["box_halfwidth"][:4]
+labT=LT["1.5"]["value"][:4]; labTbox=LT["1.5"]["box_halfwidth"][:4]
+labA=LA["1.5"]["value"][:4]; labAbox=LA["1.5"]["box_halfwidth"][:4]
+SER=[("1.5",BLUE,"o"),("2.0",ORANGE,"s"),("2.5",AQUA,"^")]
+def labplot(ax,D,e,c,m,label,dx=1.0,ms=5,lw=1.5,ls="-"):
+    x=D[e]["gap_nominal_mm"]*dx; y=D[e]["value"]; bw=D[e]["box_halfwidth"]; eb=D[e]["errbar_halfwidth"]
+    for xi,yi,bi in zip(x,y,bw): ax.add_patch(Rectangle((xi*0.955,yi-bi),xi*0.09,2*bi,fc=c,alpha=0.18,lw=0))
+    ax.errorbar(x,y,yerr=eb,fmt=m+ls,color=c,ms=ms,lw=lw,capsize=2,label=label)
 
 # ---------- Fig 1 geometry schematic (one hole, cross-section)
 f,ax=plt.subplots(figsize=(7.2,4.6)); ax.set_axis_off(); ax.grid(False)
@@ -105,18 +120,13 @@ ax.set_title("What the preamplifier sees (illustration, not data)"); ax.legend(f
 save(f,"fig_timeline.png")
 
 # ---------- Fig 4 measured data
-f,axs=plt.subplots(1,2,figsize=(7.4,2.9))
-ax=axs[0]; ax.plot(*labRall,"o-",color=INK,ms=6,lw=1.5)
-ax.set_xscale("log"); ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("R = Q_anode / Q_top"); ax.set_ylim(0,1)
-ax.set_title("Measured charge ratio"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"])
-ax=axs[1]
-d=[0.1,0.2,0.5,1.0,2.0]
-s15=[0.80,0.83,0.30,0.24,0.25]; s20=[0.81,0.90,0.29,0.25,0.25]; s25=[0.93,1.03,0.37,0.26,0.26]
-for s,c,l in [(s15,BLUE,"E_ind 1.5 kV/cm"),(s20,ORANGE,"2.0 (approx.)"),(s25,AQUA,"2.5 (approx.)")]:
-    ax.plot(d,s,"o-",color=c,ms=5,lw=1.5,label=l)
-ax.plot(d[:4],np.array(s15[:4])*labR,"s--",color=VIOLET,ms=5,lw=1.2,label="Q_anode = R × Q_top (1.5)")
-ax.set_xscale("log"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"])
-ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("charge per event [pC]"); ax.set_title("Measured charges"); ax.legend(fontsize=7.5)
+f,axs=plt.subplots(1,3,figsize=(7.6,2.9))
+ticks=([0.1,0.2,0.5,1,2],["0.1","0.2","0.5","1","2"])
+for ax,D,t,yl in [(axs[0],LR,"Ratio R","Q_anode / Q_top"),(axs[1],LT,"Top charge","charge per event [pC]"),(axs[2],LA,"Anode charge","charge per event [pC]")]:
+    for (e,c,m),dx in zip(SER,(0.97,1.0,1.03)):
+        labplot(ax,D,e,c,m,f"E_ind {e}",dx=dx)
+    ax.set_xscale("log"); ax.set_xticks(*ticks); ax.set_xticks([],minor=True); ax.set_title(t); ax.set_ylabel(yl); ax.set_xlabel("nominal gap d [mm]")
+axs[0].set_ylim(0.4,1.0); axs[0].legend(fontsize=7,title="kV/cm",title_fontsize=7)
 f.tight_layout(); save(f,"fig_measured.png")
 
 # ---------- Fig 5 copper baseline with loss bars
@@ -144,18 +154,20 @@ ax.errorbar(nom,Rcu,yerr=[Rcu-Rcl,Rch-Rcu],fmt="s-",color=INK2,ms=5,capsize=3,lw
 R4=arm("4.0","R");R12=arm("12.0","R");R6=arm("6.0","R");R8=arm("8.0","R")
 ax.fill_between(nom,R4,R12,color=BLUE,alpha=0.15,lw=0,label="sim R_glass, ε_r 4–12")
 ax.fill_between(nom,R6,R8,color=BLUE,alpha=0.45,lw=0,label="sim R_glass, ε_r 6–8")
-ax.plot(nom,labR,"o-",color=ORANGE,ms=6,label="lab R")
-ax.set_xscale("log"); ax.set_xticks(nom); ax.set_xticklabels(["0.1","0.2","0.5","1.0"]); ax.set_ylim(0,1.15)
+labplot(ax,LR,"1.5",ORANGE,"o","lab R (E_ind 1.5)",ms=6,lw=2)
+ax.set_xscale("log"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"]); ax.set_xticks([],minor=True); ax.set_ylim(0,1.15)
 ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("R = Q_anode / Q_top"); ax.set_title("Ratio: simulation vs lab"); ax.legend(fontsize=7.2,loc="lower right")
 ax=axs[1]
 F6=arm("6.0","F");F8=arm("8.0","F")
 ax.fill_between(nom,F6,F8,color=BLUE,alpha=0.45,lw=0,label="sim F (3D), ε_r 6–8")
 for e,ls in [(6,":"),(8,"--")]:
     ax.plot(nom,gas/(gas+0.8/e),ls,color=BLUE,lw=1.3,label=f"planar f(gas gap), ε_r {e}")
-ax.plot(nom,labR/Rcu,"o-",color=ORANGE,ms=6,label="F the data need = lab R / sim R_Cu")
+Fn=labR/Rcu; Fnl=(labR-labRbox)/Rch; Fnh=(labR+labRbox)/Rcl
+ax.fill_between(nom,Fnl,Fnh,color=ORANGE,alpha=0.18,lw=0)
+ax.plot(nom,Fn,"o-",color=ORANGE,ms=6,label="F the data need = lab R / sim R_Cu")
 ax.axhline(1,color=INK2,lw=1)
-ax.set_xscale("log"); ax.set_xticks(nom); ax.set_xticklabels(["0.1","0.2","0.5","1.0"]); ax.set_ylim(0,1.3)
-ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("glass factor F = R_glass / R_Cu"); ax.set_title("Glass factor"); ax.legend(fontsize=7.2,loc="lower right")
+ax.set_xscale("log"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"]); ax.set_xticks([],minor=True); ax.set_ylim(0,1.3)
+ax.set_xlim(0.085,1.2); ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("glass factor F = R_glass / R_Cu"); ax.set_title("Glass factor"); ax.legend(fontsize=7.2,loc="lower right")
 f.tight_layout(); save(f,"fig_ratio.png")
 
 # ---------- Fig 7 charges
@@ -163,17 +175,29 @@ f,axs=plt.subplots(1,2,figsize=(7.4,3.0))
 ax=axs[0]
 T=arm("6.0","top_pC");Tl=arm("6.0","top_lo");Th=arm("6.0","top_hi")
 ax.errorbar(nom,T,yerr=[T-Tl,Th-T],fmt="s-",color=BLUE,ms=5,capsize=3,label="sim Q_top (glass ε_r 6)")
-ax.plot(nom,[0.80,0.83,0.30,0.24],"o-",color=ORANGE,ms=6,label="lab Q_top (E_ind 1.5)")
-ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xticks(nom); ax.set_xticklabels(["0.1","0.2","0.5","1.0"])
+labplot(ax,LT,"1.5",ORANGE,"o","lab Q_top (E_ind 1.5)",ms=6,lw=2)
+ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"]); ax.set_xticks([],minor=True)
 ax.yaxis.set_major_formatter(PL); ax.yaxis.set_minor_formatter(FuncFormatter(lambda v,p: f"{v:g}" if round(v*10) in (2,3,5) or round(v) in (2,3) else "")); ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("charge per event [pC]"); ax.set_title("Top-electrode charge"); ax.legend(fontsize=7.5)
-for x,a,bb in zip(nom,T,[0.80,0.83,0.30,0.24]): ax.annotate(f"×{a/bb:.1f}",(x,a),textcoords="offset points",xytext=(4,6),fontsize=8,color=INK2)
+for x,a,bb in zip(nom,T,labT): ax.annotate(f"×{a/bb:.1f}",(x,a),textcoords="offset points",xytext=(4,6),fontsize=8,color=INK2)
 ax=axs[1]
 A6=-arm("6.0","anode_pC"); B6=-arm("6.0","bottom_pC"); Acu=-arm("Cu","anode_pC"); Bcu=-arm("Cu","bottom_pC")
 ax.plot(nom,Acu,"s-",color=INK2,ms=5,lw=1.5,label="anode, copper")
 ax.plot(nom,A6,"s-",color=BLUE,ms=5,label="anode, glass ε_r 6")
 ax.plot(nom,B6,"^--",color=AQUA,ms=6,label="|bottom|, glass ε_r 6")
 ax.plot(nom,np.abs(Bcu),"^:",color=INK2,ms=5,lw=1.2,label="|bottom|, copper")
-ax.plot(nom,np.array([0.80,0.83,0.30,0.24])*labR,"o-",color=ORANGE,ms=6,label="lab anode (R × Q_top)")
-ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xticks(nom); ax.set_xticklabels(["0.1","0.2","0.5","1.0"])
+labplot(ax,LA,"1.5",ORANGE,"o","lab anode (E_ind 1.5)",ms=6,lw=2)
+ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xticks([0.1,0.2,0.5,1,2]); ax.set_xticklabels(["0.1","0.2","0.5","1","2"]); ax.set_xticks([],minor=True)
 ax.yaxis.set_major_formatter(PL); ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("|charge| per event [pC]"); ax.set_title("Anode and bottom charges (sim)"); ax.legend(fontsize=7)
 f.tight_layout(); save(f,"fig_charges.png")
+
+# ---------- Fig 9 copper baseline implied by the lab
+f,ax=plt.subplots(figsize=(4.6,3.0))
+ax.errorbar(nom,Rcu,yerr=[Rcu-Rcl,Rch-Rcu],fmt="s-",color=INK2,ms=5,capsize=3,lw=1.5,label="sim R_Cu")
+lo=(labR-labRbox)/F8; hi=(labR+labRbox)/F6
+ax.fill_between(nom,lo,hi,color=ORANGE,alpha=0.25,lw=0,label="lab R / sim F (ε_r 6–8, box width)")
+ax.plot(nom,labR/((F6+F8)/2),"o-",color=ORANGE,ms=6,label="lab R / sim F (ε_r 7)")
+for x,a,b in zip(nom[1:],(labR/((F6+F8)/2))[1:],Rcu[1:]): ax.annotate(f"×{a/b:.2f}",(x,a),textcoords="offset points",xytext=(5,5),fontsize=8,color=INK2)
+ax.set_xscale("log"); ax.set_xticks(nom); ax.set_xticklabels(["0.1","0.2","0.5","1.0"]); ax.set_xticks([],minor=True)
+ax.set_xlabel("nominal gap d [mm]"); ax.set_ylabel("copper-anode ratio R_Cu"); ax.set_title("Copper baseline: simulated vs implied by the lab"); ax.legend(fontsize=7)
+save(f,"fig_implied.png")
+#print("implied", labR/F6, labR/F8, "sim", Rcu, "ratio", labR/((F6+F8)/2)/Rcu, "Fneed", Fn, Fnl, Fnh)

@@ -32,7 +32,8 @@ figcaption { font-family: "Inter","DejaVu Sans",sans-serif; font-size: 8.2pt; co
 figcaption b { color: var(--ink); }
 .box { border: 1pt solid var(--rule); background: var(--bg2); padding: 8pt 11pt; margin: 8pt 0 10pt; break-inside: avoid; }
 .box h4 { margin-top: 0; }
-.key { border-left: 3pt solid var(--accent); }
+.key { border-left: 3pt solid var(--accent); font-size: 9.3pt; line-height: 1.38; }
+.key p { margin-bottom: 4pt; }
 .warn { border-left: 3pt solid var(--warn); }
 .tag { font-family:"Inter","DejaVu Sans",sans-serif; font-size:7.6pt; font-weight:600; padding:0.5pt 4pt; border-radius:3pt; border:0.7pt solid currentColor; white-space:nowrap; }
 .lab { color:#b4541f; } .sim { color:#2a78d6; } .inf { color:#5a4fc4; } .ass { color:#7a7871; }
@@ -51,21 +52,21 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <body>
 
 <div class="titleblock">
-<div class="meta">THGEM studies · Garfield++ simulation vs measurement · report compiled 11 November 2026</div>
+<div class="meta">THGEM studies · Garfield++ simulation vs measurement · report compiled 11 November 2026, revised 22 November 2026 with the exact lab values</div>
 <h1>Why the anode signal of a THGEM detector shrinks at small induction gaps</h1>
 <div class="subtitle">A self-contained introduction and complete account of the study: physics background, detector, measurement, simulation model, results, what has been ruled out, and what is still open.</div>
 </div>
 
 <div class="box key">
 <h4>The study on one page</h4>
-<p><b>The observation.</b> In a thick gaseous electron multiplier (THGEM) read out on both its top electrode and on an anode pad behind 0.8&nbsp;mm of resistive glass, the ratio of anode to top charge, <i>R</i>, falls from 0.80–0.86 at induction gaps of 0.5–1&nbsp;mm to 0.64 at 0.2&nbsp;mm and 0.51 at 0.1&nbsp;mm. The fall does not depend on the induction field. At the same time the top charge grows three- to fourfold below 0.5&nbsp;mm.</p>
+<p><b>The observation.</b> In a thick gaseous electron multiplier (THGEM) read out on both its top electrode and on an anode pad behind 0.8&nbsp;mm of resistive glass, the ratio of anode to top charge, <i>R</i>, falls from 0.72–0.89 at induction gaps of 0.5–1&nbsp;mm (depending on the induction field) to 0.64 at 0.2&nbsp;mm and 0.51 at 0.1&nbsp;mm. At 0.1 and 0.2&nbsp;mm the ratio does not depend on the induction field. At the same time the top charge grows three- to fourfold below 0.5&nbsp;mm.</p>
 <p><b>The leading explanation.</b> The electrons that reach the anode stop on the <i>surface of the glass</i>, not on the metal pad. On the microsecond time scale of the readout, the glass behaves as a dielectric, so the pad only "sees" a fraction <i>F</i> of those electrons, and the rest of the signal appears on the THGEM bottom electrode. <i>F</i> drops as the gas gap shrinks. With the real detector geometry, the simulated <i>F</i> is 0.88–0.90 at 1&nbsp;mm, 0.77–0.81 at 0.5&nbsp;mm, 0.53–0.60 at 0.2&nbsp;mm and 0.27–0.31 at 0.1&nbsp;mm (glass ε<sub>r</sub> 6–8). This is the only mechanism found so far that lowers <i>R</i> in the observed direction and does not depend on the field.</p>
-<p><b>But the full simulation does not reproduce the data.</b> (1) The simulated copper-anode baseline <i>R</i><sub>Cu</sub> falls with the gap (1.05 → 0.67), because more and more avalanche electrons end on the underside of the bottom copper and on the lowest part of the hole wall. As a result, the simulated <i>R</i> with glass is 0.1–0.25 below the data at 0.2–1&nbsp;mm and nearly flat. At 0.5 and 1&nbsp;mm the data would need <i>F</i> &gt; 1, which glass cannot give, so the main remaining error is on the copper/transport side. (2) The simulated top charge is 1.7–2.8× too high at 0.2–1&nbsp;mm. (3) The 0.1&nbsp;mm point is a clear miss (top charge 5.6× too high), probably because the real 0.1&nbsp;mm gap is not a clean, uniform 10&nbsp;µm gas gap.</p>
+<p><b>What the full simulation gets right and wrong.</b> Each simulation is compared with the lab series taken at the same induction field (1.5&nbsp;kV/cm). (1) From 0.2 to 1&nbsp;mm, the simulated <i>R</i> with glass has the <b>right gap dependence but is about 20&nbsp;% too low</b>: the lab <i>R</i> is 1.22–1.23× the simulated one at all three gaps (glass ε<sub>r</sub> 7). Equivalently, the copper-anode baseline <i>R</i><sub>Cu</sub> that the lab implies falls with the gap just like the simulated one (1.05 → 0.67, from avalanche electrons lost on the underside of the bottom copper and the lowest hole wall), but sits about 1.22× higher. The remaining problem at these gaps is therefore a roughly gap-independent scale on the copper/transport side, not the shape. (2) The simulated top charge is 1.7–2.8× too high at 0.2–1&nbsp;mm. (3) The 0.1&nbsp;mm point is a clear miss (top charge 5.6× too high; <i>R</i> 0.29–0.32 against 0.51), probably because the real 0.1&nbsp;mm gap is not a clean, uniform 10&nbsp;µm gas gap.</p>
 <p><b>Ruled out</b> as the cause of the gap dependence: grid-sampling artefacts (found and fixed), mesh, drift-gap length, attachment, space charge, the avalanche approximation, gain level, corner rounding (within the tested range), FR4 charging-up (iterative and fully-charged limit), readout impedance, and glass surface charging (at ρ = 10<sup>10</sup>&nbsp;Ω·cm).</p>
 <p><b>Most informative next steps</b> (lab, cheapest first): a test pulse into the anode channel at 0.1 and ≥1&nbsp;mm; a bare-copper-anode measurement, which would measure <i>R</i><sub>Cu</sub> and <i>F</i> directly; a measurement of the real 0.1&nbsp;mm gap and its flatness; a measurement of the glass ε<sub>r</sub>. On the simulation side, the main candidate is the hexagonal hole lattice, which has not been simulated yet.</p>
 </div>
 
-<p class="small"><b>How to read this report.</b> Every number is labelled by where it comes from: <span class="tag lab">lab</span> measured on the detector; <span class="tag sim">sim</span> taken from a simulation output; <span class="tag inf">inferred</span> our reading of those numbers; <span class="tag ass">assumed</span> an input nobody has measured. Sections 2 and 3 are background for a newcomer; a reader who knows gaseous detectors can start at Section 4. The authoritative technical record is <code>docs/anode_charge_fraction.md</code> and the run log <code>docs/STATUS.md</code> in the repository <code>lmoleri/THGEM-garfield</code> (commit <code>d431c49</code>). This report adds no new simulations, and its plots are redrawn from the result tables.</p>
+<p class="small"><b>How to read this report.</b> Every number is labelled by where it comes from: <span class="tag lab">lab</span> measured on the detector; <span class="tag sim">sim</span> taken from a simulation output; <span class="tag inf">inferred</span> our reading of those numbers; <span class="tag ass">assumed</span> an input nobody has measured. Sections 2 and 3 are background for a newcomer; a reader who knows gaseous detectors can start at Section 4. The authoritative technical record is <code>docs/anode_charge_fraction.md</code> and the run log <code>docs/STATUS.md</code> in the repository <code>lmoleri/THGEM-garfield</code> (commit <code>d431c49</code>). This report adds no new simulations, and its plots are redrawn from the result tables. <b>Revision of 22 November 2026:</b> the lab values are now the exact values extracted from the experimenter's plots, with their uncertainties. The first version compared the simulation (<i>E</i><sub>ind</sub> 1.5&nbsp;kV/cm) with an <i>R</i> series taken at 2.0&nbsp;kV/cm; this changed the conclusions at 0.5 and 1&nbsp;mm (Sections&nbsp;4.3 and 6).</p>
 
 <div class="toc">
 <div>1. The question</div>
@@ -86,7 +87,7 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <p>A THGEM is a thin printed-circuit board, copper-clad on both sides and drilled with a dense pattern of sub-millimetre holes. A voltage across the board creates a strong field inside the holes, where electrons multiply in an avalanche. Below the THGEM there is a narrow <b>induction gap</b> and then a readout <b>anode</b>. In this detector, the anode is a metal pad covered by 0.8&nbsp;mm of resistive glass.</p>
 <p>Two electrodes are read out with charge-sensitive preamplifiers: the THGEM <b>top</b> copper and the <b>anode</b> pad. For each X-ray event, both give a charge, and the quantity of interest is their ratio</p>
 <div class="eq">$$R \;=\; \frac{Q_\text{anode}}{Q_\text{top}}.$$</div>
-<p>The ratio was measured as a function of the induction gap <i>d</i>. It drops sharply at small gaps (Fig.&nbsp;4): 0.51, 0.64, 0.855, 0.80 and 0.755 at <i>d</i> = 0.1, 0.2, 0.5, 1 and 2&nbsp;mm <span class="tag lab">lab</span>. The aim of the study is to understand this drop with a first-principles simulation in Garfield++, and to find out what the simulation still gets wrong.</p>
+<p>The ratio was measured as a function of the induction gap <i>d</i> for three induction fields. It drops sharply at small gaps (Fig.&nbsp;4). At <i>E</i><sub>ind</sub> = 1.5&nbsp;kV/cm it is 0.51, 0.64, 0.77, 0.72 and 0.65 at <i>d</i> = 0.1, 0.2, 0.5, 1 and 2&nbsp;mm <span class="tag lab">lab</span>. The aim of the study is to understand this drop with a first-principles simulation in Garfield++, and to find out what the simulation still gets wrong.</p>
 <p>Why it matters: the anode signal is what a THGEM-based detector would normally use for position or energy information. If the anode signal depends strongly on the gap, small mechanical variations in the gap (flatness, spacer tolerance) translate directly into gain non-uniformity, and the gap cannot be shrunk freely to reduce signal spread or improve timing.</p>
 
 <!-- ================================================================ -->
@@ -218,21 +219,24 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <h3>4.3 The data</h3>
 <figure>
 <img src="fig/fig_measured.png">
-<figcaption><b>Figure 4.</b> Lab data. Left: the measured ratio <i>R</i>. Right: the measured top charge per event for three induction fields, and the anode charge inferred as <i>R</i> × <i>Q</i><sub>top</sub>. The <i>E</i><sub>ind</sub> = 1.5 series values are as recorded in the study docs. The 2.0 and 2.5 kV/cm values were read from the experimenter's plot and are approximate, especially at 1 and 2&nbsp;mm. No measurement uncertainties were available for this report.</figcaption>
+<figcaption><b>Figure 4.</b> Lab data for the three induction fields <span class="tag lab">lab</span>: the ratio <i>R</i>, the top charge and the anode charge per event. Error bars are the fit errors on the underlying per-event distributions (0.1–1&nbsp;%, mostly smaller than the markers). The translucent boxes show the widths of those distributions. Values were extracted exactly from the experimenter's vector plots (<code>docs/report/lab_data/</code>).</figcaption>
 </figure>
 <table class="keep">
-<caption>Table 3. Measured values <span class="tag lab">lab</span>.</caption>
+<caption>Table 3. Measured values <span class="tag lab">lab</span>, ± distribution width (box half-width). Fit errors are 0.03–0.5&nbsp;% and not shown.</caption>
 <tr><th>Nominal <i>d</i> [mm]</th><th class="num">0.1</th><th class="num">0.2</th><th class="num">0.5</th><th class="num">1.0</th><th class="num">2.0</th></tr>
-<tr><td><i>R</i> = <i>Q</i><sub>anode</sub>/<i>Q</i><sub>top</sub></td><td class="num">0.51</td><td class="num">0.64</td><td class="num">0.855</td><td class="num">0.80</td><td class="num">0.755</td></tr>
-<tr><td><i>Q</i><sub>top</sub> [pC], <i>E</i><sub>ind</sub> 1.5</td><td class="num">0.80</td><td class="num">0.83</td><td class="num">0.30</td><td class="num">0.24</td><td class="num">~0.25</td></tr>
-<tr><td><i>Q</i><sub>anode</sub> = <i>R</i> × <i>Q</i><sub>top</sub> [pC] <span class="tag inf">inferred</span></td><td class="num">0.41</td><td class="num">0.53</td><td class="num">0.26</td><td class="num">0.19</td><td class="num">–</td></tr>
+<tr><td><i>R</i>, <i>E</i><sub>ind</sub> 1.5</td><td class="num">0.511 ± 0.008</td><td class="num">0.635 ± 0.012</td><td class="num">0.775 ± 0.025</td><td class="num">0.724 ± 0.036</td><td class="num">0.646 ± 0.037</td></tr>
+<tr><td><i>R</i>, <i>E</i><sub>ind</sub> 2.0</td><td class="num">0.514</td><td class="num">0.636</td><td class="num">0.857</td><td class="num">0.799</td><td class="num">0.756</td></tr>
+<tr><td><i>R</i>, <i>E</i><sub>ind</sub> 2.5</td><td class="num">0.514</td><td class="num">0.639</td><td class="num">0.889</td><td class="num">0.852</td><td class="num">0.809</td></tr>
+<tr><td><i>Q</i><sub>top</sub> [pC], <i>E</i><sub>ind</sub> 1.5</td><td class="num">0.80 ± 0.09</td><td class="num">0.83 ± 0.10</td><td class="num">0.30 ± 0.05</td><td class="num">0.24 ± 0.04</td><td class="num">0.26 ± 0.06</td></tr>
+<tr><td><i>Q</i><sub>anode</sub> [pC], <i>E</i><sub>ind</sub> 1.5</td><td class="num">0.41 ± 0.05</td><td class="num">0.53 ± 0.06</td><td class="num">0.23 ± 0.03</td><td class="num">0.17 ± 0.03</td><td class="num">0.16 ± 0.04</td></tr>
 </table>
-<p>Two features of the data matter for the interpretation:</p>
+<p>Three features of the data matter for the interpretation:</p>
 <ol>
-<li><b>The <i>R</i> curves for <i>E</i><sub>ind</sub> = 1.5, 2.0 and 2.5&nbsp;kV/cm coincide at 0.1 and 0.2&nbsp;mm</b>, and only separate at ≥ 0.5&nbsp;mm. The small-gap suppression therefore does not depend on the induction field. That points to a geometric or electrostatic cause rather than a transport one, since electron extraction normally improves with field.</li>
+<li><b>The <i>R</i> curves for <i>E</i><sub>ind</sub> = 1.5, 2.0 and 2.5&nbsp;kV/cm coincide at 0.1 and 0.2&nbsp;mm</b> (0.511–0.514 and 0.635–0.639). The small-gap suppression therefore does not depend on the induction field. That points to a geometric or electrostatic cause rather than a transport one, since electron extraction normally improves with field.</li>
+<li><b>At ≥ 0.5&nbsp;mm, <i>R</i> rises with the induction field</b> (0.77 → 0.86 → 0.89 at 0.5&nbsp;mm) and falls again toward larger gaps, most strongly at 1.5&nbsp;kV/cm (0.77 → 0.72 → 0.65 from 0.5 to 2&nbsp;mm). R rises by about 15&nbsp;% from 1.5 to 2.5&nbsp;kV/cm at 0.5–2&nbsp;mm. The glass factor is pure electrostatics and cannot depend on the field, so this field dependence must come from transport: electrons lost at the hole exit, fewer of them at a stronger induction field. The simulation's copper baseline behaves this way qualitatively (Section&nbsp;6.1), but it has only been run at 1.5&nbsp;kV/cm here <span class="tag inf">inferred</span>.</li>
 <li><b>The top charge rises 3–4× below 0.5&nbsp;mm</b> (and with <i>E</i><sub>ind</sub> there). So the drop in <i>R</i> comes at least as much from a larger top charge as from a smaller anode charge. A plausible reading is that the nearby anode "closes" the hole field, as in a THWELL, which raises the gain at small gaps <span class="tag inf">inferred</span>.</li>
 </ol>
-<div class="box warn"><p style="margin:0"><b>Uncertain comparison.</b> The <i>R</i> row comes from <code>charge_ratio.pdf</code>, which the old research log attributes to <i>E</i><sub>ind</sub> = 2.0&nbsp;kV/cm. <i>Q</i><sub>top</sub> is the 1.5 series, and all simulations use 1.5. Below 0.5&nbsp;mm this does not matter, because the curves coincide. At 0.5 and 1.0&nbsp;mm, a like-for-like comparison needs the <i>R</i> of the 1.5 series.</p></div>
+<div class="box warn"><p style="margin:0"><b>Correction to the first version of this report.</b> The earlier "measured <i>R</i>" (0.51 / 0.64 / 0.855 / 0.80 / 0.755) was the 2.0&nbsp;kV/cm series, while the top charge and all simulations are at 1.5&nbsp;kV/cm. The two series coincide below 0.5&nbsp;mm, but at 0.5 and 1&nbsp;mm the 1.5 series is 0.08 lower. All comparisons below now use the 1.5 series. A second, small caveat: the lab <i>R</i> agrees with <i>Q</i><sub>anode</sub>/<i>Q</i><sub>top</sub> of the mean charges only to ≤ 3.4&nbsp;%, so it is probably the mean of per-event ratios, while the simulation forms the ratio of summed charges.</p></div>
 
 <!-- ================================================================ -->
 <h2>5. The simulation model</h2>
@@ -283,32 +287,44 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <h3>6.2 The ratio and the glass factor</h3>
 <figure>
 <img src="fig/fig_ratio.png">
-<figcaption><b>Figure 7.</b> Left: simulated <i>R</i> with a copper anode (grey) and with glass (blue bands, ε<sub>r</sub> 6–8 dark, 4–12 light) against the lab <i>R</i> (orange). Right: the simulated glass factor <i>F</i> (blue band), the planar formula <i>f</i> evaluated at the gas gap (dashed and dotted), and the factor the data would need, lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (orange). Above the line at 1, the data cannot be explained by glass at all. Data: <code>results/glass_signal/quicktest_gasgap/summary_cu90.csv</code>.</figcaption>
+<figcaption><b>Figure 7.</b> Left: simulated <i>R</i> with a copper anode (grey) and with glass (blue bands, ε<sub>r</sub> 6–8 dark, 4–12 light) against the lab <i>R</i> at the same induction field, 1.5&nbsp;kV/cm (orange; boxes = distribution widths). Right: the simulated glass factor <i>F</i> (blue band), the planar formula <i>f</i> evaluated at the gas gap (dashed and dotted), and the factor the data would need, lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (orange; the band combines the lab distribution width and the simulation interval on <i>R</i><sub>Cu</sub>). Above the line at 1, the data cannot be explained by glass at all. Data: <code>results/glass_signal/quicktest_gasgap/summary_cu90.csv</code>.</figcaption>
 </figure>
 <p>Three things stand out in Fig.&nbsp;7:</p>
 <ul>
 <li>The glass factor <i>F</i> has the right <b>shape</b>: about 0.9 at 1&nbsp;mm, falling steeply below 0.5&nbsp;mm. It is set by electrostatics alone, so it does not depend on the field, as the data require.</li>
 <li>At 0.1&nbsp;mm the 3D <i>F</i> (0.27–0.31) is much larger than the planar <i>f</i> at a 10&nbsp;µm gap (0.07–0.09). The holes make the difference: avalanche electrons start inside the hole, where the anode weighting potential is already well above zero, so the "effective gap" is larger than the copper–glass clearance <span class="tag inf">inferred</span>. At 0.5–1&nbsp;mm the planar formula is within a few percent of the 3D result.</li>
-<li>Because <i>R</i><sub>Cu</sub> falls, <i>R</i><sub>glass</sub> = <i>F</i> × <i>R</i><sub>Cu</sub> is nearly flat (0.5–0.65) and lies below the data everywhere. At 0.5 and 1&nbsp;mm the data would need <i>F</i> = 1.07 and 1.19. Glass can only lower <i>R</i>, so <b>at least part of the remaining error must be in the copper/transport side</b> (or in the <i>E</i><sub>ind</sub> mismatch of the comparison, Section&nbsp;4.3). No ε<sub>r</sub> in 4–12 brings <i>R</i><sub>glass</sub> to the data at 0.5 or 1&nbsp;mm (at most 0.69 and 0.62 at ε<sub>r</sub> 12).</li>
+<li>Because <i>R</i><sub>Cu</sub> falls, <i>R</i><sub>glass</sub> = <i>F</i> × <i>R</i><sub>Cu</sub> rises only from 0.49–0.55 at 0.2&nbsp;mm to 0.61–0.65 at 0.5&nbsp;mm and then stays at 0.59–0.60 at 1&nbsp;mm. The lab <i>R</i> at the same field has the <b>same shape</b> (0.635 → 0.775 → 0.724) but is higher by a nearly constant factor of 1.15–1.30, 1.19–1.27 and 1.20–1.23 at 0.2, 0.5 and 1&nbsp;mm (ε<sub>r</sub> 6–8). No ε<sub>r</sub> in 4–12 closes this gap at 0.5 or 1&nbsp;mm (<i>R</i><sub>glass</sub> at most 0.69 and 0.62 at ε<sub>r</sub> 12).</li>
+<li>The factor the data need, lab <i>R</i> / sim <i>R</i><sub>Cu</sub>, is 0.97 at 0.5&nbsp;mm and 1.08 at 1&nbsp;mm, with bands of 0.89–1.06 and 0.97–1.20. So, unlike in the first version of this report, the data no longer clearly require <i>F</i> &gt; 1; they require a glass factor close to 1, while the simulated one is 0.77–0.90.</li>
 </ul>
 
-<h3>6.3 Absolute charges</h3>
+<h3>6.3 The copper baseline the lab implies</h3>
+<p>Since <i>F</i> is the most robust number in the simulation (pure electrostatics, paired, ±0.002), one can turn the comparison around: divide the lab <i>R</i> by the simulated <i>F</i> to get the copper-anode ratio the lab implies, and compare it with the simulated <i>R</i><sub>Cu</sub> (Fig.&nbsp;8).</p>
+<figure>
+<img src="fig/fig_implied.png" style="width:62%">
+<figcaption><b>Figure 8.</b> Copper-anode ratio implied by the lab (lab <i>R</i> at 1.5&nbsp;kV/cm divided by the simulated glass factor <i>F</i>; band: ε<sub>r</sub> 6–8 and the lab distribution width) against the simulated <i>R</i><sub>Cu</sub>. Labels: implied/simulated at ε<sub>r</sub> 7.</figcaption>
+</figure>
+<p>From 0.2 to 1&nbsp;mm, the implied baseline (1.06–1.20, 0.95–1.01, 0.80–0.83) falls with the gap just like the simulated one (0.92, 0.80, 0.67), and the two differ by an almost constant factor of 1.22–1.23 <span class="tag inf">inferred</span>. Read this way, the simulation describes the <b>gap dependence</b> of both the glass effect and the copper hole-exit losses at these gaps, and what is left is a <b>gap-independent scale</b> of about 20&nbsp;%. In absolute terms the simulated <i>R</i><sub>glass</sub> is 0.09–0.17 below the lab at 0.2–1&nbsp;mm. Candidates for such a scale are discussed in Section&nbsp;8, item&nbsp;1. The field dependence of the lab <i>R</i> (about +15&nbsp;% from 1.5 to 2.5&nbsp;kV/cm at ≥ 0.5&nbsp;mm, Section&nbsp;4.3) is of the same size and can only come from transport, which makes electron extraction at the hole exit a natural suspect. At 0.1&nbsp;mm the implied value (1.66–1.87) is far above the simulated 1.05, which is the 0.1&nbsp;mm miss seen from another angle.</p>
+<p class="small">Caveat: this assumes the simulated <i>F</i> is right. A real glass ε<sub>r</sub> outside 6–8 changes <i>F</i> most at small gaps (Section&nbsp;8, item&nbsp;4), so the "constant factor" reading is firmest at 0.5–1&nbsp;mm.</p>
+
+<h3>6.4 Absolute charges</h3>
 <figure>
 <img src="fig/fig_charges.png">
-<figcaption><b>Figure 8.</b> Left: top charge per event, simulation (glass ε<sub>r</sub> 6) against lab; the labels give the ratio sim/lab. Right: simulated anode and bottom-electrode charges for copper and glass anodes, with the lab anode charge inferred as <i>R</i> × <i>Q</i><sub>top</sub>. With glass, the charge removed from the anode reappears on the THGEM bottom (green), which could be tested directly by reading the bottom out.</figcaption>
+<figcaption><b>Figure 9.</b> Left: top charge per event, simulation (glass ε<sub>r</sub> 6) against lab; the labels give the ratio sim/lab. Right: simulated anode and bottom-electrode charges for copper and glass anodes, with the measured lab anode charge (1.5&nbsp;kV/cm). With glass, the charge removed from the anode reappears on the THGEM bottom (green), which could be tested directly by reading the bottom out.</figcaption>
 </figure>
-<p>The simulated top charge now has a data-like <b>shape</b> at 0.2–1&nbsp;mm: a steep rise below 0.5&nbsp;mm and flat above. Its 0.2/0.5&nbsp;mm ratio is 1.86 against 2.8 measured, whereas it was 1.25 with the old geometry. Its <b>scale</b>, however, is 1.7–2.8× too high, which corresponds to roughly 25–30&nbsp;V too much on the THGEM, given that the gain doubles every ~50&nbsp;V <span class="tag inf">inferred</span>. At 0.1&nbsp;mm the hole field continues into the 10&nbsp;µm gap, the mean gain reaches 1.3×10<sup>5</sup>, and the top charge is 5.6× the measured one.</p>
+<p>The simulated top charge now has a data-like <b>shape</b> at 0.2–1&nbsp;mm: a steep rise below 0.5&nbsp;mm and flat above. Its 0.2/0.5&nbsp;mm ratio is 1.86 against 2.7 measured, whereas it was 1.25 with the old geometry. Its <b>scale</b>, however, is 1.7–2.8× too high, which corresponds to roughly 25–30&nbsp;V too much on the THGEM, given that the gain doubles every ~50&nbsp;V <span class="tag inf">inferred</span>. At 0.1&nbsp;mm the hole field continues into the 10&nbsp;µm gap, the mean gain reaches 1.3×10<sup>5</sup>, and the top charge is 5.6× the measured one. The simulated anode charge with glass is 1.3–1.5× (0.2&nbsp;mm), 2.0–2.2× (0.5&nbsp;mm), 2.3–2.4× (1&nbsp;mm) and 3.1–3.5× (0.1&nbsp;mm) the measured one.</p>
 
-<h3>6.4 Summary table</h3>
+<h3>6.5 Summary table</h3>
 <table class="keep">
-<caption>Table 4. Real-geometry results <span class="tag sim">sim</span> (glass ε<sub>r</sub> 6–8), with lab values in brackets.</caption>
+<caption>Table 4. Real-geometry results <span class="tag sim">sim</span> (glass ε<sub>r</sub> 6–8), with lab values at <i>E</i><sub>ind</sub> 1.5&nbsp;kV/cm in brackets.</caption>
 <tr><th>Nominal <i>d</i></th><th class="num">0.1&nbsp;mm</th><th class="num">0.2&nbsp;mm</th><th class="num">0.5&nbsp;mm</th><th class="num">1.0&nbsp;mm</th></tr>
 <tr><td><i>Q</i><sub>top</sub> [pC]</td><td class="num">4.44–4.47 (0.80)</td><td class="num">1.42 (0.83)</td><td class="num">0.77 (0.30)</td><td class="num">0.68 (0.24)</td></tr>
 <tr><td><i>Q</i><sub>top</sub> sim/lab</td><td class="num">5.6</td><td class="num">1.7</td><td class="num">2.6</td><td class="num">2.8</td></tr>
-<tr><td><i>R</i><sub>glass</sub></td><td class="num">0.29–0.32 (0.51)</td><td class="num">0.49–0.55 (0.64)</td><td class="num">0.61–0.65 (0.855)</td><td class="num">0.59–0.60 (0.80)</td></tr>
+<tr><td><i>R</i><sub>glass</sub></td><td class="num">0.29–0.32 (0.511)</td><td class="num">0.49–0.55 (0.635)</td><td class="num">0.61–0.65 (0.775)</td><td class="num">0.59–0.60 (0.724)</td></tr>
 <tr><td><i>R</i><sub>Cu</sub></td><td class="num">1.05</td><td class="num">0.92</td><td class="num">0.80</td><td class="num">0.67</td></tr>
 <tr><td><i>F</i> = <i>R</i><sub>glass</sub>/<i>R</i><sub>Cu</sub></td><td class="num">0.27–0.31</td><td class="num">0.53–0.60</td><td class="num">0.77–0.81</td><td class="num">0.88–0.90</td></tr>
-<tr><td>Lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (the <i>F</i> the data need)</td><td class="num">0.49</td><td class="num">0.70</td><td class="num"><b>1.07</b></td><td class="num"><b>1.19</b></td></tr>
+<tr><td>Lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (the <i>F</i> the data need)</td><td class="num">0.49</td><td class="num">0.69</td><td class="num">0.97</td><td class="num">1.08</td></tr>
+<tr><td>Lab <i>R</i> / sim <i>R</i><sub>glass</sub></td><td class="num">1.6–1.8</td><td class="num">1.15–1.30</td><td class="num">1.19–1.27</td><td class="num">1.20–1.23</td></tr>
+<tr><td><i>Q</i><sub>anode</sub> with glass [pC]</td><td class="num">1.28–1.44 (0.41)</td><td class="num">0.69–0.78 (0.53)</td><td class="num">0.47–0.50 (0.23)</td><td class="num">0.40–0.41 (0.17)</td></tr>
 <tr><td>Copper anode e⁻ fraction</td><td class="num">0.984</td><td class="num">0.838</td><td class="num">0.656</td><td class="num">0.568</td></tr>
 <tr><td>… lost on bottom-Cu underside</td><td class="num">0.001</td><td class="num">0.048</td><td class="num">0.172</td><td class="num">0.254</td></tr>
 <tr><td>… lost on lowest 100&nbsp;µm of wall</td><td class="num">0.012</td><td class="num">0.080</td><td class="num">0.130</td><td class="num">0.135</td></tr>
@@ -317,11 +333,11 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 </table>
 <p class="small">Precision: charges ±6–10&nbsp;%, <i>R</i> ±5&nbsp;% (±1&nbsp;% at 0.1&nbsp;mm), <i>F</i> ±0.002 (paired), copper fraction ±0.02. ESS 74–189 of 500 for the glass top charge, 455–556 of 1800 for the copper baseline.</p>
 
-<h3>6.5 What the results say</h3>
+<h3>6.6 What the results say</h3>
 <ol>
 <li><b>The glass produces a suppression of the right kind</b>: geometric, field-independent and steep below 0.5&nbsp;mm <span class="tag inf">inferred</span>.</li>
-<li><b>The full model does not reproduce <i>R</i>.</b> <i>R</i><sub>glass</sub> is 0.1–0.25 below the data at 0.2–1&nbsp;mm and roughly flat, because the simulated copper baseline falls.</li>
-<li><b>At 0.5 and 1&nbsp;mm the data need <i>F</i> &gt; 1</b> with the simulated <i>R</i><sub>Cu</sub>. The largest remaining error is therefore on the copper/transport side, or in the comparison itself.</li>
+<li><b>At 0.2–1&nbsp;mm the full model reproduces the gap shape of <i>R</i> but not its scale.</b> Compared at the same induction field, the lab <i>R</i> is a nearly constant 1.2× the simulated <i>R</i><sub>glass</sub>. The simulated copper baseline falls with the gap, and the lab implies one that falls the same way.</li>
+<li><b>The remaining error at these gaps is a roughly gap-independent ~20&nbsp;% scale</b>, most likely on the copper/transport or readout-window side. The first version of this report concluded that the data need <i>F</i> &gt; 1 and that the error was in the <i>shape</i> of the copper baseline; with the correct lab series that no longer holds.</li>
 <li><b>The top charge has the right shape but is 1.7–2.8× too high</b> at 0.2–1&nbsp;mm.</li>
 <li><b>0.1&nbsp;mm is a clear miss.</b> The real 0.1&nbsp;mm gap is almost certainly not a clean, uniform 10&nbsp;µm gap.</li>
 <li>With glass, the charge removed from the anode reappears on the bottom. A bottom readout would show <i>where</i> it goes, but not <i>which</i> mechanism moved it there: glass, readout impedance and copper hole-exit losses all put it on the bottom with the same sign.</li>
@@ -360,11 +376,13 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <h2>8. Open questions and proposed tests</h2>
 <p>Ranked by how much of the discrepancy each could carry <span class="tag inf">inferred</span>:</p>
 <ol>
-<li><b>Why the simulated copper baseline falls</b> (0.98 → 0.57). This is the largest error at 0.2–1&nbsp;mm. Untested candidates:
+<li><b>Why the simulated <i>R</i> is ~20&nbsp;% low at 0.2–1&nbsp;mm</b> (0.09–0.17 in absolute terms). This is now the largest error at these gaps, and it is nearly the same at every gap (Section&nbsp;6.3). The candidates below are not ranked; none has been tested:
   <ul>
+  <li><b>Electron transport at the hole exit</b>, i.e. the copper baseline itself being too low. The lab <i>R</i> rises by ~15&nbsp;% from 1.5 to 2.5&nbsp;kV/cm at ≥ 0.5&nbsp;mm, which glass cannot produce, so the real extraction depends on the field by about as much as the missing scale. <b>Running the simulation at 2.0 and 2.5&nbsp;kV/cm</b> would test this directly: if the simulated <i>R</i><sub>Cu</sub> rises like the lab <i>R</i>, the transport model has the right field dependence and the scale sits elsewhere.</li>
+  <li>The <b>readout time window</b>: the simulation scores at 10&nbsp;µs, while the lab reads the plateau of a preamplifier with 100&nbsp;µs decay. The slow ion part of the top signal changes the denominator of <i>R</i> at every gap (item&nbsp;5).</li>
   <li>The <b>hexagonal lattice</b>: the farthest copper from a hole is 0.58&nbsp;mm in a hexagonal lattice against 0.71&nbsp;mm in the square one. A square-pitch-0.93&nbsp;mm proxy with the same hole density is prepared in <code>results/hex_proxy_p093/</code> but was parked. A true hexagonal cell needs a mirror-symmetric <i>p</i>/2 × (√3/2)<i>p</i> unit cell.</li>
   <li>The real hole-exit profile: the copper was etched from 150&nbsp;µm, and the corner radius is unknown.</li>
-  <li>The <i>E</i><sub>ind</sub> mismatch at 0.5–1&nbsp;mm (Section&nbsp;4.3). At 0.2&nbsp;mm the copper fraction rises from 0.78 to 0.88 for <i>E</i><sub>ind</sub> 1 → 3&nbsp;kV/cm, so the field does matter for the baseline.</li>
+  <li>The definition of <i>R</i>: the lab value is probably a mean of per-event ratios, the simulation a ratio of summed charges (a few percent at most, Section&nbsp;4.3).</li>
   </ul></li>
 <li><b>What the real 0.1&nbsp;mm gap looks like.</b> Spacer tolerance, glass and THGEM flatness, or partial contact would raise the effective gap and lower the gain. This has not been modelled.</li>
 <li><b>Absolute gain ~2× too high</b> at 0.2–1&nbsp;mm. Candidates: Penning transfer (0.405 is not measured for this mixture), the gas table, the lattice.</li>
@@ -381,7 +399,6 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <tr><td>Gap and flatness at 0.1&nbsp;mm (feeler gauge, or capacitance across the gap)</td><td>Whether the 10&nbsp;µm assumption holds</td><td>A larger or non-uniform gap would explain part of the 0.1&nbsp;mm miss</td></tr>
 <tr><td>Glass ε<sub>r</sub> (capacitance of a known area)</td><td>Removes the main assumed input to <i>F</i></td><td>—</td></tr>
 <tr><td>Bottom-electrode readout at 0.1&nbsp;mm</td><td>Confirms that the missing charge is on the bottom</td><td>~3&nbsp;pC with glass; it cannot separate glass from impedance</td></tr>
-<tr><td><i>R</i> at <i>E</i><sub>ind</sub> 1.5 at 0.5 and 1&nbsp;mm (if not already available)</td><td>Like-for-like comparison with the simulation</td><td>—</td></tr>
 </table>
 
 <h3>8.2 Looking ahead</h3>
@@ -397,8 +414,8 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <h2>9. Uncertainties and limitations</h2>
 <h3>9.1 On the lab side</h3>
 <ul>
-<li>No measurement uncertainties (statistical or systematic) were available for this report, for either <i>R</i> or <i>Q</i><sub>top</sub>.</li>
-<li>The <i>E</i><sub>ind</sub> of the <i>R</i> series may be 2.0 rather than 1.5&nbsp;kV/cm (Section&nbsp;4.3).</li>
+<li>The lab values carry fit errors (0.03–0.5&nbsp;%) and distribution widths (1.5–6&nbsp;% on <i>R</i>, 11–24&nbsp;% on the charges). Systematic uncertainties (calibration, gap setting) are not quantified here.</li>
+<li>The lab <i>R</i> is probably the mean of per-event ratios; it differs from the ratio of mean charges by ≤ 3.4&nbsp;%.</li>
 <li>The gap flatness over the pad was not measured. The 0.1&nbsp;mm point is the most exposed to this.</li>
 <li>Glass ε<sub>r</sub> and the quality of the glass rear contact are not measured.</li>
 </ul>
@@ -407,13 +424,13 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <li><b>Geometry:</b> square lattice instead of hexagonal; ideal sharp copper corners; uniform planar gap.</li>
 <li><b>Physics:</b> uncharged FR4 and glass; Penning transfer 0.405 assumed; transport in the metal-anode field; charges scored at 10&nbsp;µs and not convolved with the preamplifier response.</li>
 <li><b>Statistics:</b> heavy-tailed weights. ESS 74–189 of 500 for the glass top charge, so the quoted ±6–10&nbsp;% bootstrap intervals may understate the real spread. <i>F</i> is robust because it is paired.</li>
-<li><b>Scope:</b> one induction field (1.5&nbsp;kV/cm); four gaps; a "quick test" (5 × 100 paths per gap), not the full gated production study, which was planned but interrupted.</li>
+<li><b>Scope:</b> one induction field (1.5&nbsp;kV/cm), so the field dependence of the lab <i>R</i> at ≥ 0.5&nbsp;mm is not yet compared; four gaps; a "quick test" (5 × 100 paths per gap), not the full gated production study, which was planned but interrupted.</li>
 <li><b>Provenance:</b> the copper-baseline binary (<code>../THGEM_corner</code>) is not under version control; some drivers live under the gitignored <code>results/</code>; the dense gas table is not in <code>gas/</code>. The glass-signal binary is commit <code>fb42296</code>.</li>
 </ul>
 <h3>9.3 On this report</h3>
 <ul>
 <li>The report was written from the repository docs (<code>anode_charge_fraction.md</code>, <code>STATUS.md</code>, <code>glass_signal_hypothesis.md</code>), the project's archived notes, and the two result tables named in the figure captions. No simulation was run for it.</li>
-<li>All plots except Fig.&nbsp;5 were redrawn from those tables, or are analytic (Fig.&nbsp;2) or schematic (Figs.&nbsp;1 and 3). The experimenter's original plots (<code>charge_ratio.pdf</code>, <code>top_charge.pdf</code>) were not available. The 2.0 and 2.5&nbsp;kV/cm top-charge curves in Fig.&nbsp;4 are approximate.</li>
+<li>All plots except Fig.&nbsp;5 were redrawn from those tables, or are analytic (Fig.&nbsp;2) or schematic (Figs.&nbsp;1 and 3). The lab values were extracted from the experimenter's vector plots (<code>top_charge.pdf</code>, <code>anode_charge.pdf</code>, <code>charge_ratio.pdf</code>) directly from the drawing coordinates, so the extraction error is negligible. They are in <code>docs/report/lab_data/</code>.</li>
 <li>The background sections (2–3) give standard textbook physics in simplified form; quoted typical values (W-value, drift velocities) are indicative.</li>
 </ul>
 
@@ -431,6 +448,7 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <tr><td>5–8 Nov</td><td>Glass quick test (Cu 50&nbsp;µm, gap from the copper): <i>F</i> alone matched the data at 0.1–0.5&nbsp;mm (0.52/0.64/0.80/0.89 at ε<sub>r</sub> 6; superseded). The copper baseline was found to fall with the gap; a gain-matched run showed this is geometric.</td></tr>
 <tr><td>9–10 Nov</td><td>Fully charged FR4 limit and readout impedance: both excluded.</td></tr>
 <tr><td>10–11 Nov</td><td><b>Real copper thickness (90&nbsp;µm) and gap convention</b> (gas gap <i>d</i> − 90&nbsp;µm). The 0.2–1&nbsp;mm shapes improved; 0.1&nbsp;mm became a clear miss, and the "<i>F</i> alone matches" reading no longer holds. Glass ρ = 10<sup>10</sup>&nbsp;Ω·cm.</td></tr>
+<tr><td>22 Nov</td><td><b>Exact lab values</b> for all three induction fields. The earlier "measured <i>R</i>" was the 2.0&nbsp;kV/cm series; compared at its own field (1.5&nbsp;kV/cm), the simulation reproduces the 0.2–1&nbsp;mm gap shape of <i>R</i> and is ~20&nbsp;% low throughout, instead of needing <i>F</i> &gt; 1.</td></tr>
 </table>
 <p class="small">Other corrected inputs: copper 35 → 50 → 90&nbsp;µm; drift gap 1 → 5&nbsp;mm; lab gain "≲ 2.8×10<sup>3</sup>" → measured top charge 0.24–0.83&nbsp;pC.</p>
 
