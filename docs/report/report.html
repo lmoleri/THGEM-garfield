@@ -43,6 +43,7 @@ figcaption b { color: var(--ink); }
 .titleblock { margin-top: 6mm; }
 .subtitle { font-family:"Inter","DejaVu Sans",sans-serif; font-size: 11.5pt; color: var(--ink2); margin-bottom: 10pt; }
 .meta { font-family:"Inter","DejaVu Sans",sans-serif; font-size: 8.6pt; color: var(--ink2); margin-bottom: 12pt; }
+a { color: var(--accent); text-decoration: none; }
 code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.2pt; background: var(--bg2); padding: 0 2pt; }
 .katex { font-size: 1.04em; }
 .eq { margin: 5pt 0 7pt; }
@@ -55,6 +56,7 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <div class="meta">THGEM studies · Garfield++ simulation vs measurement · report compiled 11 November 2026, revised 22 November 2026 with the exact lab values</div>
 <h1>Why the anode signal of a THGEM detector shrinks at small induction gaps</h1>
 <div class="subtitle">A self-contained introduction and complete account of the study: physics background, detector, measurement, simulation model, results, what has been ruled out, and what is still open.</div>
+<div class="meta">Code, documentation and data: <a href="https://github.com/lmoleri/THGEM-garfield">github.com/lmoleri/THGEM-garfield</a> (this report: <code>docs/report/</code>)</div>
 </div>
 
 <div class="box key">
@@ -66,7 +68,7 @@ code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.
 <p><b>Most informative next steps</b> (lab, cheapest first): a test pulse into the anode channel at 0.1 and ≥1&nbsp;mm; a bare-copper-anode measurement, which would measure <i>R</i><sub>Cu</sub> and <i>F</i> directly; a measurement of the real 0.1&nbsp;mm gap and its flatness; a measurement of the glass ε<sub>r</sub>. On the simulation side, the main candidate is the hexagonal hole lattice, which has not been simulated yet.</p>
 </div>
 
-<p class="small"><b>How to read this report.</b> Every number is labelled by where it comes from: <span class="tag lab">lab</span> measured on the detector; <span class="tag sim">sim</span> taken from a simulation output; <span class="tag inf">inferred</span> our reading of those numbers; <span class="tag ass">assumed</span> an input nobody has measured. Sections 2 and 3 are background for a newcomer; a reader who knows gaseous detectors can start at Section 4. The authoritative technical record is <code>docs/anode_charge_fraction.md</code> and the run log <code>docs/STATUS.md</code> in the repository <code>lmoleri/THGEM-garfield</code> (commit <code>d431c49</code>). This report adds no new simulations, and its plots are redrawn from the result tables. <b>Revision of 22 November 2026:</b> the lab values are now the exact values extracted from the experimenter's plots, with their uncertainties. The first version compared the simulation (<i>E</i><sub>ind</sub> 1.5&nbsp;kV/cm) with an <i>R</i> series taken at 2.0&nbsp;kV/cm; this changed the conclusions at 0.5 and 1&nbsp;mm (Sections&nbsp;4.3 and 6).</p>
+<p class="small"><b>How to read this report.</b> Every number is labelled by where it comes from: <span class="tag lab">lab</span> measured on the detector; <span class="tag sim">sim</span> taken from a simulation output; <span class="tag inf">inferred</span> our reading of those numbers; <span class="tag ass">assumed</span> an input nobody has measured. Sections 2 and 3 are background for a newcomer; a reader who knows gaseous detectors can start at Section 4. The authoritative technical record is <code>docs/anode_charge_fraction.md</code> and the run log <code>docs/STATUS.md</code> in the repository <a href="https://github.com/lmoleri/THGEM-garfield"><code>lmoleri/THGEM-garfield</code></a> (commit <code>d431c49</code>). This report adds no new simulations, and its plots are redrawn from the result tables. <b>Revision of 22 November 2026:</b> the lab values are now the exact values extracted from the experimenter's plots, with their uncertainties. The first version compared the simulation (<i>E</i><sub>ind</sub> 1.5&nbsp;kV/cm) with an <i>R</i> series taken at 2.0&nbsp;kV/cm; this changed the conclusions at 0.5 and 1&nbsp;mm (Sections&nbsp;4.3 and 6).</p>
 
 <div class="toc">
 <div>1. The question</div>
