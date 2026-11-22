@@ -1,0 +1,7 @@
+{
+  "name": "thgem-anode-signal-report",
+  "private": true,
+  "description": "Build for docs/report: HTML + KaTeX rendered to PDF with Playwright",
+  "scripts": { "build": "node build.js" },
+  "dependencies": { "katex": "0.16.11" }
+}

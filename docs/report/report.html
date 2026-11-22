@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>THGEM anode signal study</title>
+<link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
+<script src="node_modules/katex/dist/katex.min.js"></script>
+<script src="node_modules/katex/dist/contrib/auto-render.min.js"></script>
+<style>
+@page { size: A4; margin: 20mm 19mm 20mm 19mm; }
+:root { --ink:#1b1b1a; --ink2:#52514e; --rule:#d9d7d1; --accent:#2a78d6; --warn:#b4541f; --bg2:#f5f4f0; }
+html { font-family: "Charter","Bitstream Charter","DejaVu Serif",serif; font-size: 10.4pt; line-height: 1.45; color: var(--ink); background:#fff; }
+body { margin:0; }
+h1,h2,h3,h4,.sans { font-family: "Inter","DejaVu Sans",sans-serif; }
+h1 { font-size: 23pt; line-height:1.15; margin: 0 0 6pt; letter-spacing:-0.01em; }
+h2 { font-size: 14.5pt; margin: 20pt 0 6pt; padding-top: 4pt; border-top: 1.5px solid var(--ink); break-after: avoid; }
+h3 { font-size: 11.3pt; margin: 13pt 0 4pt; break-after: avoid; }
+h4 { font-size: 10.2pt; margin: 9pt 0 3pt; break-after: avoid; }
+p { margin: 0 0 6pt; text-align: justify; hyphens: auto; }
+ul,ol { margin: 0 0 6pt; padding-left: 17pt; } li { margin-bottom: 2.5pt; }
+.newpage { break-before: page; }
+table { border-collapse: collapse; width: 100%; margin: 6pt 0 9pt; font-family: "Inter","DejaVu Sans",sans-serif; font-size: 8.3pt; line-height:1.3; }
+tr { break-inside: avoid; }
+table.keep { break-inside: avoid; }
+th, td { border-bottom: 0.6pt solid var(--rule); padding: 3pt 4pt; text-align: left; vertical-align: top; }
+th { border-bottom: 1.2pt solid var(--ink); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+caption { caption-side: top; text-align:left; font-weight:600; padding-bottom:3pt; font-size:8.6pt; }
+figure { margin: 8pt 0 10pt; break-inside: avoid; }
+figure img { width: 100%; display:block; }
+figcaption { font-family: "Inter","DejaVu Sans",sans-serif; font-size: 8.2pt; color: var(--ink2); margin-top: 3pt; line-height:1.35; }
+figcaption b { color: var(--ink); }
+.box { border: 1pt solid var(--rule); background: var(--bg2); padding: 8pt 11pt; margin: 8pt 0 10pt; break-inside: avoid; }
+.box h4 { margin-top: 0; }
+.key { border-left: 3pt solid var(--accent); }
+.warn { border-left: 3pt solid var(--warn); }
+.tag { font-family:"Inter","DejaVu Sans",sans-serif; font-size:7.6pt; font-weight:600; padding:0.5pt 4pt; border-radius:3pt; border:0.7pt solid currentColor; white-space:nowrap; }
+.lab { color:#b4541f; } .sim { color:#2a78d6; } .inf { color:#5a4fc4; } .ass { color:#7a7871; }
+.small { font-size: 8.8pt; color: var(--ink2); }
+.toc { font-family:"Inter","DejaVu Sans",sans-serif; font-size:9.3pt; columns: 2; column-gap: 20pt; }
+.toc div { margin-bottom: 2pt; }
+.titleblock { margin-top: 6mm; }
+.subtitle { font-family:"Inter","DejaVu Sans",sans-serif; font-size: 11.5pt; color: var(--ink2); margin-bottom: 10pt; }
+.meta { font-family:"Inter","DejaVu Sans",sans-serif; font-size: 8.6pt; color: var(--ink2); margin-bottom: 12pt; }
+code { font-family: "JetBrains Mono","DejaVu Sans Mono",monospace; font-size: 8.2pt; background: var(--bg2); padding: 0 2pt; }
+.katex { font-size: 1.04em; }
+.eq { margin: 5pt 0 7pt; }
+.twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; }
+</style>
+</head>
+<body>
+
+<div class="titleblock">
+<div class="meta">THGEM studies · Garfield++ simulation vs measurement · report compiled 11 November 2026</div>
+<h1>Why the anode signal of a THGEM detector shrinks at small induction gaps</h1>
+<div class="subtitle">A self-contained introduction and complete account of the study: physics background, detector, measurement, simulation model, results, what has been ruled out, and what is still open.</div>
+</div>
+
+<div class="box key">
+<h4>The study on one page</h4>
+<p><b>The observation.</b> In a thick gaseous electron multiplier (THGEM) read out on both its top electrode and on an anode pad behind 0.8&nbsp;mm of resistive glass, the ratio of anode to top charge, <i>R</i>, falls from 0.80–0.86 at induction gaps of 0.5–1&nbsp;mm to 0.64 at 0.2&nbsp;mm and 0.51 at 0.1&nbsp;mm. The fall does not depend on the induction field. At the same time the top charge grows three- to fourfold below 0.5&nbsp;mm.</p>
+<p><b>The leading explanation.</b> The electrons that reach the anode stop on the <i>surface of the glass</i>, not on the metal pad. On the microsecond time scale of the readout, the glass behaves as a dielectric, so the pad only "sees" a fraction <i>F</i> of those electrons, and the rest of the signal appears on the THGEM bottom electrode. <i>F</i> drops as the gas gap shrinks. With the real detector geometry, the simulated <i>F</i> is 0.88–0.90 at 1&nbsp;mm, 0.77–0.81 at 0.5&nbsp;mm, 0.53–0.60 at 0.2&nbsp;mm and 0.27–0.31 at 0.1&nbsp;mm (glass ε<sub>r</sub> 6–8). This is the only mechanism found so far that lowers <i>R</i> in the observed direction and does not depend on the field.</p>
+<p><b>But the full simulation does not reproduce the data.</b> (1) The simulated copper-anode baseline <i>R</i><sub>Cu</sub> falls with the gap (1.05 → 0.67), because more and more avalanche electrons end on the underside of the bottom copper and on the lowest part of the hole wall. As a result, the simulated <i>R</i> with glass is 0.1–0.25 below the data at 0.2–1&nbsp;mm and nearly flat. At 0.5 and 1&nbsp;mm the data would need <i>F</i> &gt; 1, which glass cannot give, so the main remaining error is on the copper/transport side. (2) The simulated top charge is 1.7–2.8× too high at 0.2–1&nbsp;mm. (3) The 0.1&nbsp;mm point is a clear miss (top charge 5.6× too high), probably because the real 0.1&nbsp;mm gap is not a clean, uniform 10&nbsp;µm gas gap.</p>
+<p><b>Ruled out</b> as the cause of the gap dependence: grid-sampling artefacts (found and fixed), mesh, drift-gap length, attachment, space charge, the avalanche approximation, gain level, corner rounding (within the tested range), FR4 charging-up (iterative and fully-charged limit), readout impedance, and glass surface charging (at ρ = 10<sup>10</sup>&nbsp;Ω·cm).</p>
+<p><b>Most informative next steps</b> (lab, cheapest first): a test pulse into the anode channel at 0.1 and ≥1&nbsp;mm; a bare-copper-anode measurement, which would measure <i>R</i><sub>Cu</sub> and <i>F</i> directly; a measurement of the real 0.1&nbsp;mm gap and its flatness; a measurement of the glass ε<sub>r</sub>. On the simulation side, the main candidate is the hexagonal hole lattice, which has not been simulated yet.</p>
+</div>
+
+<p class="small"><b>How to read this report.</b> Every number is labelled by where it comes from: <span class="tag lab">lab</span> measured on the detector; <span class="tag sim">sim</span> taken from a simulation output; <span class="tag inf">inferred</span> our reading of those numbers; <span class="tag ass">assumed</span> an input nobody has measured. Sections 2 and 3 are background for a newcomer; a reader who knows gaseous detectors can start at Section 4. The authoritative technical record is <code>docs/anode_charge_fraction.md</code> and the run log <code>docs/STATUS.md</code> in the repository <code>lmoleri/THGEM-garfield</code> (commit <code>d431c49</code>). This report adds no new simulations, and its plots are redrawn from the result tables.</p>
+
+<div class="toc">
+<div>1. The question</div>
+<div>2. Background: how a THGEM works</div>
+<div>3. Background: how signals are induced</div>
+<div>4. The detector and the measurement</div>
+<div>5. The simulation model</div>
+<div>6. Results for the real geometry</div>
+<div>7. What has been ruled out, and why</div>
+<div>8. Open questions and proposed tests</div>
+<div>9. Uncertainties and limitations</div>
+<div>10. How the study got here</div>
+<div>A. Glossary · B. Data and provenance · C. References</div>
+</div>
+
+<!-- ================================================================ -->
+<h2 class="newpage">1. The question</h2>
+<p>A THGEM is a thin printed-circuit board, copper-clad on both sides and drilled with a dense pattern of sub-millimetre holes. A voltage across the board creates a strong field inside the holes, where electrons multiply in an avalanche. Below the THGEM there is a narrow <b>induction gap</b> and then a readout <b>anode</b>. In this detector, the anode is a metal pad covered by 0.8&nbsp;mm of resistive glass.</p>
+<p>Two electrodes are read out with charge-sensitive preamplifiers: the THGEM <b>top</b> copper and the <b>anode</b> pad. For each X-ray event, both give a charge, and the quantity of interest is their ratio</p>
+<div class="eq">$$R \;=\; \frac{Q_\text{anode}}{Q_\text{top}}.$$</div>
+<p>The ratio was measured as a function of the induction gap <i>d</i>. It drops sharply at small gaps (Fig.&nbsp;4): 0.51, 0.64, 0.855, 0.80 and 0.755 at <i>d</i> = 0.1, 0.2, 0.5, 1 and 2&nbsp;mm <span class="tag lab">lab</span>. The aim of the study is to understand this drop with a first-principles simulation in Garfield++, and to find out what the simulation still gets wrong.</p>
+<p>Why it matters: the anode signal is what a THGEM-based detector would normally use for position or energy information. If the anode signal depends strongly on the gap, small mechanical variations in the gap (flatness, spacer tolerance) translate directly into gain non-uniformity, and the gap cannot be shrunk freely to reduce signal spread or improve timing.</p>
+
+<!-- ================================================================ -->
+<h2>2. Background: how a THGEM works</h2>
+
+<h3>2.1 The structure</h3>
+<p>The THGEM in this study is a 0.8&nbsp;mm FR4 (glass-fibre epoxy) board with 90&nbsp;µm of copper on each face. It has holes of 0.5&nbsp;mm diameter on a hexagonal pattern with 1.0&nbsp;mm pitch. Around each hole, the copper is etched back by 0.1&nbsp;mm (the <b>rim</b>), so that the bare FR4 is exposed in a ring around the hole. The rim reduces the chance of discharges at the sharp copper edge. Figure&nbsp;1 shows one hole to scale.</p>
+
+<figure>
+<img src="fig/fig_geometry.png" style="width:88%">
+<figcaption><b>Figure 1.</b> One THGEM hole in cross-section, to scale, drawn for a nominal induction gap of 0.5&nbsp;mm. The 5&nbsp;mm drift region above is drawn shortened. The spacers set the nominal gap <i>d</i> from the FR4 to the glass, so the gas gap below the bottom copper is <i>d</i> − 90&nbsp;µm. The simulation uses a square hole lattice; the real lattice is hexagonal.</figcaption>
+</figure>
+
+<p>There are three field regions, from top to bottom:</p>
+<ul>
+<li><b>Drift region</b> (5&nbsp;mm, 1&nbsp;kV/cm): the X-ray converts here, and the freed electrons drift down toward the THGEM.</li>
+<li><b>Holes</b>: with 1.9&nbsp;kV across the 0.98&nbsp;mm plate, the field in the hole is tens of kV/cm, which is high enough for electrons to multiply.</li>
+<li><b>Induction gap</b> (gas gap 10–910&nbsp;µm here): a weaker field (1.5–15&nbsp;kV/cm) pulls the avalanche electrons out of the holes toward the anode.</li>
+</ul>
+
+<h3>2.2 From X-ray to electrons</h3>
+<p>A 5.9&nbsp;keV X-ray (from an <sup>55</sup>Fe source) is absorbed by photo-effect in the argon, and the photoelectron loses its energy by ionising the gas. On average it takes about <i>W</i> ≈ 26&nbsp;eV to make one electron–ion pair in argon, so each X-ray frees about</p>
+<div class="eq">$$N_0 \approx \frac{5900\ \text{eV}}{26\ \text{eV}} \approx 227 \ \text{primary electrons},$$</div>
+<p>within a cloud of a few hundred µm. The study uses 227 as a fixed scaling convention to convert simulated per-electron charges into charge per event.</p>
+
+<h3>2.3 Drift, diffusion and attachment</h3>
+<p>In an electric field, an electron in a gas gains energy from the field and loses it in collisions. It quickly reaches a constant average <b>drift velocity</b> along the field, of order cm/µs for electrons in argon mixtures. The positive ions are about a thousand times slower. Collisions also make the electrons spread out (<b>diffusion</b>). Some electrons are captured by electronegative molecules (<b>attachment</b>); in Ar/CO₂ this effect is small and was found not to depend on the gap. All these transport properties depend on the gas and the local field. They are computed by <b>Magboltz</b>, which solves the Boltzmann equation from electron–molecule cross sections, and are stored in a gas table.</p>
+
+<h3>2.4 Gas amplification</h3>
+<p>Above a few tens of kV/cm, an electron gains enough energy between collisions to ionise, and each new electron does the same. The number of ionisations per unit length is the first <b>Townsend coefficient</b> α(<i>E</i>), which rises very steeply with the field. Along a path <i>s</i>, the mean multiplication is</p>
+<div class="eq">$$G \;=\; \exp\!\left(\int \big[\alpha(E) - \eta(E)\big]\,\mathrm{d}s\right),$$</div>
+<p>where η is the attachment coefficient. Because of the exponential, small field changes give large gain changes. In this detector the simulated gain roughly doubles for every 50&nbsp;V on the THGEM <span class="tag sim">sim</span>. Argon–CO₂ mixtures also show the <b>Penning effect</b>: excited argon atoms can ionise CO₂ molecules, which adds ionisation. Garfield++ models this with a transfer probability <i>r</i>; the study uses <i>r</i> = 0.405 <span class="tag ass">assumed</span> (Garfield's default for this mixture, not measured here).</p>
+<p>Charge scale check: with 227 primaries and a gain of 2×10<sup>4</sup>, an event makes 227 × 2×10<sup>4</sup> × 1.6×10<sup>−19</sup>&nbsp;C ≈ 0.7&nbsp;pC of avalanche electrons. That is the order of magnitude of the charges in this study.</p>
+
+<h3>2.5 Where the charges end</h3>
+<p>After the avalanche, the charges spread over several places, and this is the core of the problem:</p>
+<ul>
+<li><b>Avalanche electrons</b> leave the hole and drift to the anode, which is the useful signal. Some end instead on the <b>underside of the bottom copper</b> (field lines that curl back from the gap onto the electrode) or on the <b>FR4 hole wall</b>, mostly its lowest part. The fraction that reaches the anode is the <b>extraction</b> or <b>anode electron fraction</b>.</li>
+<li><b>Positive ions</b> are born mostly near the bottom of the hole, where the avalanche is largest. They drift back up along the field lines, to the top copper, the hole wall, or out through the hole into the drift region toward the cathode (<b>ion backflow</b>). They are slow: crossing the 5&nbsp;mm drift gap takes about 370&nbsp;µs.</li>
+<li>Charges that land on <b>insulators</b> (the FR4 wall and rim, and the glass) stay there for a while and change the field. This is called <b>charging-up</b>; it can change the gain and the electron paths over minutes to hours of operation.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2>3. Background: how signals are induced</h2>
+
+<h3>3.1 Signals come from moving charge, not from arriving charge</h3>
+<p>A common beginner's picture is that an electrode "counts" the electrons that hit it. That is not how the signal arises. A charge near a set of grounded electrodes induces image charges on all of them. When the charge moves, the image charges change, and currents flow in the external circuits. The signal on an electrode starts the moment the charge starts moving, not when it arrives. It can be large on an electrode that never collects any charge, and it can even have the opposite sign. This is why the THGEM top electrode gives a large signal even though most avalanche electrons leave in the other direction: the slow ions moving up from the bottom of the hole induce it.</p>
+
+<h3>3.2 The Shockley–Ramo theorem</h3>
+<p>The Shockley–Ramo theorem makes this quantitative. For each electrode <i>k</i>, define a <b>weighting potential</b> φ<sub><i>k</i></sub>(<b>x</b>): the potential obtained by putting electrode <i>k</i> at 1&nbsp;V and all other electrodes at 0&nbsp;V, with all free charges removed and <b>all dielectrics left in place</b>. Its negative gradient is the weighting field <b>E</b><sub><i>k</i></sub>. A point charge <i>q</i> moving with velocity <b>v</b> then induces on electrode <i>k</i> the current</p>
+<div class="eq">$$I_k(t) \;=\; q\,\mathbf{E}_k\big(\mathbf{x}(t)\big)\cdot\mathbf{v}(t),$$</div>
+<p>and moving from <b>x</b><sub>0</sub> to <b>x</b><sub>1</sub> it induces the charge</p>
+<div class="eq">$$Q_k \;=\; \int I_k\,\mathrm{d}t \;=\; q\,\big[\varphi_k(\mathbf{x}_1) - \varphi_k(\mathbf{x}_0)\big].$$</div>
+<p>(The sign convention here is that an electron collected on an electrode gives that electrode a signal of −<i>e</i>. Textbooks differ by an overall sign.) Two points are worth stressing:</p>
+<ul>
+<li>The weighting potential is <b>not</b> the real potential. The real field decides <i>where charges go</i>; the weighting field decides <i>how much signal each electrode sees</i> along the way. The study uses both: the real field to transport the charges, and the weighting potentials to score the signals.</li>
+<li>Because the weighting potentials of all electrodes add to 1 everywhere, Σ<sub><i>k</i></sub>φ<sub><i>k</i></sub> = 1, the induced charges on all electrodes add to zero for any electron–ion pair. A charge that is "missing" from one electrode always shows up on another. In the simulation, the four electrode signals sum to zero within 3×10<sup>−14</sup>, which is used as a check.</li>
+</ul>
+<p><b>Inventory form.</b> Electrons and ions are created in pairs at the same point, so their initial contributions cancel. The induced charge on electrode <i>k</i> at time <i>T</i> is therefore just a sum over where every charge <i>is</i> at time <i>T</i>:</p>
+<div class="eq">$$Q_k(T) \;=\; \sum_i q_i\,\varphi_k\big(\mathbf{x}_i(T)\big).$$</div>
+<p>This is the form used in the simulation: take a snapshot of all charges at <i>T</i> = 10&nbsp;µs and weight each one with φ<sub><i>k</i></sub>. Once all charges have stopped on conductors, <i>Q<sub>k</sub></i> equals the net charge collected on electrode <i>k</i>. As long as charges are still moving, or sit on insulators, it does not.</p>
+
+<h3>3.3 The resistive-glass anode</h3>
+<p>Here the electrons that leave the hole do not reach the metal pad. They stop on the top surface of the glass. What does the pad see?</p>
+<p><b>On short time scales the glass is a dielectric.</b> A resistive layer of resistivity ρ and permittivity ε<sub>r</sub> relaxes surface charge with a time constant of order ρε<sub>0</sub>ε<sub>r</sub>. For a charge on a glass of thickness <i>b</i> facing a gas gap <i>g</i>, the planar result is (Riegler, ref.&nbsp;[4])</p>
+<div class="eq">$$\tau \;=\; \rho\,\varepsilon_0\left(\varepsilon_r + \frac{b}{g}\right).$$</div>
+<p>With ρ = 10<sup>10</sup>&nbsp;Ω·cm = 10<sup>8</sup>&nbsp;Ω·m <span class="tag lab">lab</span>, ε<sub>r</sub> ≈ 7 <span class="tag ass">assumed</span> and <i>b</i> = 0.8&nbsp;mm, τ is about 8&nbsp;ms at <i>g</i> = 0.41&nbsp;mm and about 80&nbsp;ms at <i>g</i> = 10&nbsp;µm. Both are far longer than the 10–100&nbsp;µs over which the signal is read. So, for the signal, the glass is a pure dielectric, and the weighting potential must be computed with the glass in place.</p>
+<p><b>The planar glass factor.</b> Take the bottom copper at weighting potential 0 and the pad at 1, with gas gap <i>g</i> and glass thickness <i>b</i> between them. The normal component of <i>D</i> = εE is continuous, so <i>E</i><sub>glass</sub> = <i>E</i><sub>gas</sub>/ε<sub>r</sub>, and <i>E</i><sub>gas</sub><i>g</i> + <i>E</i><sub>glass</sub><i>b</i> = 1. The weighting potential at the glass surface is then</p>
+<div class="eq">$$f \;=\; E_\text{gas}\,g \;=\; \frac{g}{g + b/\varepsilon_r}.$$</div>
+<p>An electron that drifts from the bottom copper to the glass surface gives the pad only −<i>f e</i> instead of −<i>e</i>. The rest, −(1−<i>f</i>)<i>e</i>, appears on the bottom copper. The glass looks like an extra gas gap of thickness <i>b</i>/ε<sub>r</sub> (0.1–0.13&nbsp;mm for ε<sub>r</sub> 6–8). When the real gap is comparable to or smaller than that, the pad signal is strongly suppressed (Fig.&nbsp;2). Over times much longer than τ, the charge leaks through the glass and the pad eventually receives the full −<i>e</i>, but the preamplifier has long since forgotten it by then.</p>
+
+<figure>
+<img src="fig/fig_weighting.png">
+<figcaption><b>Figure 2.</b> Left: anode weighting potential across a planar induction gap, for a metal anode at the gas boundary (grey) and for a pad behind 0.8&nbsp;mm glass (blue). The electron stops at the glass top, where φ = <i>f</i>. Right: the planar factor <i>f</i> as a function of gas gap for three glass permittivities. These are analytic curves, not simulation output. In the real 3D geometry the holes let the weighting field reach into the THGEM, so the simulated factor <i>F</i> is larger than <i>f</i> at very small gaps (Section&nbsp;6.2).</figcaption>
+</figure>
+
+<h3>3.4 What the preamplifier measures</h3>
+<p>Each electrode is connected to a charge-sensitive preamplifier (CSA) (NAICAM DCB209A). It integrates the induced current onto a feedback capacitor, so its output step is proportional to the induced charge. The output decays with a time constant of 100&nbsp;µs. There is no shaper; the charge is read from the plateau of the digitised pulse. The electron part of the signal is complete within nanoseconds. The ion part near the hole develops over microseconds, while the ion drift through the 5&nbsp;mm drift gap (~370&nbsp;µs) is longer than the decay, so that part of the signal is partly lost. Figure&nbsp;3 sketches this. The simulation scores the charges at 10&nbsp;µs. The glass factor <i>F</i> is the same at 5, 10 and 20&nbsp;µs <span class="tag sim">sim</span>, but <i>R</i><sub>Cu</sub> and <i>Q</i><sub>top</sub> at the true readout time have not been checked (open point 5 in Section&nbsp;8).</p>
+
+<figure>
+<img src="fig/fig_timeline.png" style="width:86%">
+<figcaption><b>Figure 3.</b> Schematic only (illustrative time constants, not data): a fast electron step, a slower ion component, and the 100&nbsp;µs preamplifier decay. The orange line marks the simulation's scoring time.</figcaption>
+</figure>
+
+<p><b>Input impedance.</b> The induced current divides between the CSA input and any capacitance from the electrode to the other electrodes. The DCB209A presents an effective input capacitance of about 1.84&nbsp;nF, against 2–55&nbsp;pF from the anode pad to the grounded bottom copper. So more than 97&nbsp;% of the induced charge reaches the preamplifier (Section&nbsp;7).</p>
+
+<h3>3.5 The observables used in this study</h3>
+<table class="keep">
+<tr><th style="width:24%">Symbol</th><th>Definition</th><th style="width:28%">Comment</th></tr>
+<tr><td><i>R</i> (lab)</td><td><i>Q</i><sub>anode</sub>/<i>Q</i><sub>top</sub> measured, glass anode</td><td>The quantity to explain</td></tr>
+<tr><td><i>R</i><sub>glass</sub></td><td>Simulated <i>Q</i><sub>anode</sub>/<i>Q</i><sub>top</sub> scored with the weighting potential of the pad behind glass</td><td>Direct counterpart of the lab <i>R</i></td></tr>
+<tr><td><i>R</i><sub>Cu</sub></td><td>The same charges scored with a copper anode at the glass surface</td><td>What a bare copper anode would give</td></tr>
+<tr><td><i>F</i> = <i>R</i><sub>glass</sub>/<i>R</i><sub>Cu</sub></td><td>Pure glass weighting factor</td><td>Planar limit <i>f</i> = <i>g</i>/(<i>g</i>+<i>b</i>/ε<sub>r</sub>)</td></tr>
+<tr><td>Anode e⁻ fraction</td><td>Fraction of avalanche electrons (weighted, excluding attachment) that end on a copper anode</td><td>Transport-only quantity; from a separate run</td></tr>
+</table>
+<p>Because <i>R</i><sub>glass</sub> and <i>R</i><sub>Cu</sub> are scored on the same charges, their statistical fluctuations largely cancel in <i>F</i>. That is why <i>F</i> has a much smaller uncertainty (±0.002) than <i>R</i> (±5&nbsp;%).</p>
+
+<!-- ================================================================ -->
+<h2>4. The detector and the measurement</h2>
+
+<h3>4.1 Detector as measured</h3>
+<table>
+<caption>Table 1. Detector and operating parameters. Confirmed by the experimenter unless marked.</caption>
+<tr><th>Item</th><th>Value</th><th>Status</th></tr>
+<tr><td>THGEM substrate</td><td>FR4, 0.8&nbsp;mm</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Copper</td><td>90&nbsp;µm on both faces (plate ≈ 0.98&nbsp;mm)</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Holes</td><td>Ø 0.5&nbsp;mm, pitch 1.0&nbsp;mm, hexagonal lattice, rim 0.1&nbsp;mm</td><td><span class="tag lab">lab</span> (simulated as square)</td></tr>
+<tr><td>Active area</td><td>≈ 2 × 2&nbsp;cm (THGEM and anode pad)</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Drift gap, field</td><td>5&nbsp;mm, 1&nbsp;kV/cm</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>THGEM voltage</td><td>Δ<i>V</i> = 1.9&nbsp;kV</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Gas</td><td>Ar/CO₂ 93:7, flowing</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Source, rate</td><td><sup>55</sup>Fe 5.9&nbsp;keV, ~10&nbsp;Hz</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Anode</td><td>Readout pad behind 0.8&nbsp;mm resistive glass, ρ = 10<sup>10</sup>&nbsp;Ω·cm</td><td><span class="tag lab">lab</span></td></tr>
+<tr><td>Glass permittivity</td><td>ε<sub>r</sub> 6–8 used (scanned 4–12)</td><td><span class="tag ass">assumed</span></td></tr>
+<tr><td>Glass rear contact</td><td>Ideal ohmic contact to the pad over the full area</td><td><span class="tag ass">assumed</span></td></tr>
+<tr><td>Readout</td><td>DCB209A CSAs on top and anode; C<sub>in,eff</sub> ≈ 1.84&nbsp;nF; decay 100&nbsp;µs; plateau readout, no shaper; bottom copper hard-grounded; HV via the 40&nbsp;MΩ bias input</td><td><span class="tag lab">lab</span> (C<sub>in,eff</sub> from the manual)</td></tr>
+</table>
+
+<h3>4.2 The gap convention matters</h3>
+<p>The spacers set the nominal gap <i>d</i> between the THGEM <b>FR4</b> and the glass surface, not between the copper and the glass. The bottom copper is 90&nbsp;µm thick, so the gas gap is <i>d</i> − 90&nbsp;µm. The induction voltage was set as <i>E</i><sub>ind</sub> × <i>d</i>, so the real field in the gas is higher than the nominal field:</p>
+<table class="keep">
+<caption>Table 2. Nominal and real induction gaps, for the <i>E</i><sub>ind</sub> = 1.5&nbsp;kV/cm series.</caption>
+<tr><th>Nominal <i>d</i> [mm]</th><th class="num">0.1</th><th class="num">0.2</th><th class="num">0.5</th><th class="num">1.0</th></tr>
+<tr><td>Gas gap <i>d</i> − 0.09&nbsp;mm [µm]</td><td class="num">10</td><td class="num">110</td><td class="num">410</td><td class="num">910</td></tr>
+<tr><td>Gas field 1.5 × <i>d</i>/(<i>d</i> − 0.09) [kV/cm]</td><td class="num">15</td><td class="num">2.73</td><td class="num">1.83</td><td class="num">1.65</td></tr>
+</table>
+<p>This correction was only established on 10 November 2026, and it changed the picture substantially (Section&nbsp;10). At 0.1&nbsp;mm nominal, the gas gap is only 10&nbsp;µm, and the field there (15&nbsp;kV/cm) is close to the field in the hole. A 10&nbsp;µm gap held uniformly over 2×2&nbsp;cm is mechanically demanding, which matters for the interpretation of the 0.1&nbsp;mm point.</p>
+
+<h3>4.3 The data</h3>
+<figure>
+<img src="fig/fig_measured.png">
+<figcaption><b>Figure 4.</b> Lab data. Left: the measured ratio <i>R</i>. Right: the measured top charge per event for three induction fields, and the anode charge inferred as <i>R</i> × <i>Q</i><sub>top</sub>. The <i>E</i><sub>ind</sub> = 1.5 series values are as recorded in the study docs. The 2.0 and 2.5 kV/cm values were read from the experimenter's plot and are approximate, especially at 1 and 2&nbsp;mm. No measurement uncertainties were available for this report.</figcaption>
+</figure>
+<table class="keep">
+<caption>Table 3. Measured values <span class="tag lab">lab</span>.</caption>
+<tr><th>Nominal <i>d</i> [mm]</th><th class="num">0.1</th><th class="num">0.2</th><th class="num">0.5</th><th class="num">1.0</th><th class="num">2.0</th></tr>
+<tr><td><i>R</i> = <i>Q</i><sub>anode</sub>/<i>Q</i><sub>top</sub></td><td class="num">0.51</td><td class="num">0.64</td><td class="num">0.855</td><td class="num">0.80</td><td class="num">0.755</td></tr>
+<tr><td><i>Q</i><sub>top</sub> [pC], <i>E</i><sub>ind</sub> 1.5</td><td class="num">0.80</td><td class="num">0.83</td><td class="num">0.30</td><td class="num">0.24</td><td class="num">~0.25</td></tr>
+<tr><td><i>Q</i><sub>anode</sub> = <i>R</i> × <i>Q</i><sub>top</sub> [pC] <span class="tag inf">inferred</span></td><td class="num">0.41</td><td class="num">0.53</td><td class="num">0.26</td><td class="num">0.19</td><td class="num">–</td></tr>
+</table>
+<p>Two features of the data matter for the interpretation:</p>
+<ol>
+<li><b>The <i>R</i> curves for <i>E</i><sub>ind</sub> = 1.5, 2.0 and 2.5&nbsp;kV/cm coincide at 0.1 and 0.2&nbsp;mm</b>, and only separate at ≥ 0.5&nbsp;mm. The small-gap suppression therefore does not depend on the induction field. That points to a geometric or electrostatic cause rather than a transport one, since electron extraction normally improves with field.</li>
+<li><b>The top charge rises 3–4× below 0.5&nbsp;mm</b> (and with <i>E</i><sub>ind</sub> there). So the drop in <i>R</i> comes at least as much from a larger top charge as from a smaller anode charge. A plausible reading is that the nearby anode "closes" the hole field, as in a THWELL, which raises the gain at small gaps <span class="tag inf">inferred</span>.</li>
+</ol>
+<div class="box warn"><p style="margin:0"><b>Uncertain comparison.</b> The <i>R</i> row comes from <code>charge_ratio.pdf</code>, which the old research log attributes to <i>E</i><sub>ind</sub> = 2.0&nbsp;kV/cm. <i>Q</i><sub>top</sub> is the 1.5 series, and all simulations use 1.5. Below 0.5&nbsp;mm this does not matter, because the curves coincide. At 0.5 and 1.0&nbsp;mm, a like-for-like comparison needs the <i>R</i> of the 1.5 series.</p></div>
+
+<!-- ================================================================ -->
+<h2>5. The simulation model</h2>
+<p>The simulation is a single C++ program, <code>src/thgem_sim.cc</code>, built on <b>Garfield++</b>, CERN's toolkit for gaseous detectors. Its pieces are as follows.</p>
+
+<h3>5.1 Electric field: neBEM on a periodic unit cell</h3>
+<p>The field is computed with <b>neBEM</b>, a boundary-element solver. Instead of meshing the whole volume, it places unknown charge densities on the surfaces of the conductors and dielectric interfaces, solves for them, and then computes the field anywhere as a sum over those surface elements. Because the THGEM is a periodic pattern, only one unit cell around a hole is modelled, with at least 9 periodic copies. The lattice is <b>square</b>; the real one is hexagonal (Section&nbsp;8).</p>
+<p>A key early finding was that interpolating the field from a pre-computed uniform grid, which is the usual speed-up, gives wrong fields right at the thin copper edge. Cells straddling copper and gas mix the strong gas field with the zero field inside the metal. This caused electrons to be over-extracted (Fig.&nbsp;5). Since then, all transport uses the exact ("raw") neBEM field.</p>
+<figure>
+<img src="../figures/rawgrid_edge_field.png">
+<figcaption><b>Figure 5.</b> From the earlier phase of the study (0.4&nbsp;mm plate, 0.5&nbsp;mm gap; geometry superseded): field magnitude near the inner edge of the bottom copper (red outline), exact neBEM versus uniform-grid interpolation. The grid is wrong by up to 2× and reverses the field direction in a thin layer at the edge. Reproduced from <code>docs/figures/rawgrid_edge_field.png</code>.</figcaption>
+</figure>
+<p>The field mesh was checked: four times more elements change the field by 1–2&nbsp;%. For the 10&nbsp;µm gap, going from 2&nbsp;021 to 13&nbsp;938 elements changes the gap field by at most 3.3&nbsp;%, and both give 15&nbsp;kV/cm under the copper within 1–3&nbsp;% <span class="tag sim">sim</span>.</p>
+
+<h3>5.2 Gas</h3>
+<p>A dense, 110-point Magboltz table for Ar/CO₂ 93:7 provides drift velocity, diffusion, Townsend and attachment coefficients as a function of field. Penning transfer is <i>r</i> = 0.405 <span class="tag ass">assumed</span>. A coarser 10-point table used early on underestimated α by 1.2–1.7×.</p>
+
+<h3>5.3 Avalanche: weighted mean-avalanche paths</h3>
+<p>At a gain of 10<sup>4</sup>–10<sup>5</sup>, following every avalanche electron microscopically is too expensive. Instead, the simulation follows representative paths: an electron is drifted with Monte Carlo steps (<code>AvalancheMC</code>, including diffusion), and along the path it accumulates a weight, the expected number of electrons it stands for, from the local Townsend and attachment coefficients. The ions are created along the path in proportion to the local multiplication, and are drifted too. A path that happens to run through the highest-field region carries a very large weight. As a result, the weights are <b>heavy-tailed</b>: a few paths can dominate an average.</p>
+<p>The <b>effective sample size</b>, ESS = (Σ<i>w</i>)²/Σ<i>w</i>², measures how many equally weighted paths the sample is worth. For example, 500 paths with ESS 74 behave statistically like 74 paths. Bootstrap intervals assume the tail is sampled well, so with a low ESS they can understate the true uncertainty. A check against microscopic tracking at the hole exit showed the same corner losses, so the local-field approximation is not the cause of the discrepancy <span class="tag sim">sim</span>. <i>(This description simplifies the implementation; see <code>docs/manual.md</code> and <code>docs/glass_signal_hypothesis.md</code> for the details.)</i></p>
+
+<h3>5.4 Signal: paired copper/glass replay</h3>
+<p>The signal study works in two steps:</p>
+<ol>
+<li><b>Export.</b> Transport the charges in the real field, with the anode modelled as a metal boundary at the glass surface, and write a snapshot of every charge (electrons, ions, attached ions, charges deposited on insulators) at 5, 10 and 20&nbsp;µs.</li>
+<li><b>Replay.</b> Score the same snapshot twice with the inventory form of Shockley–Ramo: once with the weighting potentials of a copper anode, and once with those of the pad behind 0.8&nbsp;mm glass at several ε<sub>r</sub> (4–12). All four electrodes are scored: cathode, top, bottom and anode.</li>
+</ol>
+<p>Because both arms use identical charges, the comparison is <b>paired</b>, and <i>F</i> = <i>R</i><sub>glass</sub>/<i>R</i><sub>Cu</sub> is very precise. The built-in checks are: charge conservation in every snapshot (≤ 5×10<sup>−15</sup>); weighting-potential partition Σφ<sub><i>k</i></sub> = 1 (residual ≤ 7×10<sup>−13</sup>); all periodic copies evaluated exactly for the weighting fields (an approximation for distant copies had caused a 2&nbsp;% error, now fixed); planar-glass benchmarks against the analytic formula (errors &lt; 0.001&nbsp;%); and regression tests for two trajectory edge cases found in production.</p>
+<p>An important approximation: transport uses the field with a metal anode. Charge accumulating on the glass, or a DC voltage drop across it, would change that field. This is argued to be small in Section&nbsp;7.</p>
+
+<h3>5.5 Copper baseline run</h3>
+<p>A separate run with a copper anode records where every weighted avalanche electron ends (anode, bottom-copper underside, FR4 wall by height, rim, top). This gives the anode electron fraction and the loss map in Fig.&nbsp;6. It uses a separately built binary from <code>../THGEM_corner</code>, which is not under version control (Section&nbsp;9).</p>
+
+<h3>5.6 Statistics conventions</h3>
+<p>Intervals are 68&nbsp;% bootstrap over weighted paths. Ratios are formed from pooled signed charges, not from averages of per-path ratios. Charges per event are per-primary values × 227.</p>
+
+<!-- ================================================================ -->
+<h2>6. Results for the real geometry</h2>
+<p>Setup <span class="tag sim">sim</span>: Cu 90&nbsp;µm, gas gaps 10/110/410/910&nbsp;µm at the fields of Table&nbsp;2, Δ<i>V</i> 1.9&nbsp;kV, <i>E</i><sub>d</sub> 1&nbsp;kV/cm, 5&nbsp;mm drift, square lattice, uncharged insulators. The glass signal used 5 × 100 paths per gap (scored at 10&nbsp;µs); the copper baseline used 3 × 600 paths per gap.</p>
+
+<h3>6.1 The copper baseline falls with the gap</h3>
+<figure>
+<img src="fig/fig_copper.png">
+<figcaption><b>Figure 6.</b> Copper-anode run <span class="tag sim">sim</span>. Left: fraction of avalanche electrons reaching the anode (68&nbsp;% bootstrap). Right: where the others end. Most of the growing loss is on the underside of the bottom copper; the lowest 100&nbsp;µm of the FR4 hole wall takes a further 8–14&nbsp;% from 0.2&nbsp;mm on. Data: <code>results/copper_baseline_gasgap/summary_cu90.csv</code>.</figcaption>
+</figure>
+<p><span class="tag inf">inferred</span> As the gap grows, the induction field gets weaker relative to the hole field. More field lines from the hole exit then curl back onto the underside of the bottom copper, and the electrons that follow them are lost to the anode. This is a geometric effect. A run at about 10× lower gain (Δ<i>V</i> 1.77&nbsp;kV, old 50&nbsp;µm copper geometry) showed the same fall (0.88/0.80/0.69 at 0.1/0.2/0.5&nbsp;mm), so it is not caused by the gain being too high.</p>
+
+<h3>6.2 The ratio and the glass factor</h3>
+<figure>
+<img src="fig/fig_ratio.png">
+<figcaption><b>Figure 7.</b> Left: simulated <i>R</i> with a copper anode (grey) and with glass (blue bands, ε<sub>r</sub> 6–8 dark, 4–12 light) against the lab <i>R</i> (orange). Right: the simulated glass factor <i>F</i> (blue band), the planar formula <i>f</i> evaluated at the gas gap (dashed and dotted), and the factor the data would need, lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (orange). Above the line at 1, the data cannot be explained by glass at all. Data: <code>results/glass_signal/quicktest_gasgap/summary_cu90.csv</code>.</figcaption>
+</figure>
+<p>Three things stand out in Fig.&nbsp;7:</p>
+<ul>
+<li>The glass factor <i>F</i> has the right <b>shape</b>: about 0.9 at 1&nbsp;mm, falling steeply below 0.5&nbsp;mm. It is set by electrostatics alone, so it does not depend on the field, as the data require.</li>
+<li>At 0.1&nbsp;mm the 3D <i>F</i> (0.27–0.31) is much larger than the planar <i>f</i> at a 10&nbsp;µm gap (0.07–0.09). The holes make the difference: avalanche electrons start inside the hole, where the anode weighting potential is already well above zero, so the "effective gap" is larger than the copper–glass clearance <span class="tag inf">inferred</span>. At 0.5–1&nbsp;mm the planar formula is within a few percent of the 3D result.</li>
+<li>Because <i>R</i><sub>Cu</sub> falls, <i>R</i><sub>glass</sub> = <i>F</i> × <i>R</i><sub>Cu</sub> is nearly flat (0.5–0.65) and lies below the data everywhere. At 0.5 and 1&nbsp;mm the data would need <i>F</i> = 1.07 and 1.19. Glass can only lower <i>R</i>, so <b>at least part of the remaining error must be in the copper/transport side</b> (or in the <i>E</i><sub>ind</sub> mismatch of the comparison, Section&nbsp;4.3). No ε<sub>r</sub> in 4–12 brings <i>R</i><sub>glass</sub> to the data at 0.5 or 1&nbsp;mm (at most 0.69 and 0.62 at ε<sub>r</sub> 12).</li>
+</ul>
+
+<h3>6.3 Absolute charges</h3>
+<figure>
+<img src="fig/fig_charges.png">
+<figcaption><b>Figure 8.</b> Left: top charge per event, simulation (glass ε<sub>r</sub> 6) against lab; the labels give the ratio sim/lab. Right: simulated anode and bottom-electrode charges for copper and glass anodes, with the lab anode charge inferred as <i>R</i> × <i>Q</i><sub>top</sub>. With glass, the charge removed from the anode reappears on the THGEM bottom (green), which could be tested directly by reading the bottom out.</figcaption>
+</figure>
+<p>The simulated top charge now has a data-like <b>shape</b> at 0.2–1&nbsp;mm: a steep rise below 0.5&nbsp;mm and flat above. Its 0.2/0.5&nbsp;mm ratio is 1.86 against 2.8 measured, whereas it was 1.25 with the old geometry. Its <b>scale</b>, however, is 1.7–2.8× too high, which corresponds to roughly 25–30&nbsp;V too much on the THGEM, given that the gain doubles every ~50&nbsp;V <span class="tag inf">inferred</span>. At 0.1&nbsp;mm the hole field continues into the 10&nbsp;µm gap, the mean gain reaches 1.3×10<sup>5</sup>, and the top charge is 5.6× the measured one.</p>
+
+<h3>6.4 Summary table</h3>
+<table class="keep">
+<caption>Table 4. Real-geometry results <span class="tag sim">sim</span> (glass ε<sub>r</sub> 6–8), with lab values in brackets.</caption>
+<tr><th>Nominal <i>d</i></th><th class="num">0.1&nbsp;mm</th><th class="num">0.2&nbsp;mm</th><th class="num">0.5&nbsp;mm</th><th class="num">1.0&nbsp;mm</th></tr>
+<tr><td><i>Q</i><sub>top</sub> [pC]</td><td class="num">4.44–4.47 (0.80)</td><td class="num">1.42 (0.83)</td><td class="num">0.77 (0.30)</td><td class="num">0.68 (0.24)</td></tr>
+<tr><td><i>Q</i><sub>top</sub> sim/lab</td><td class="num">5.6</td><td class="num">1.7</td><td class="num">2.6</td><td class="num">2.8</td></tr>
+<tr><td><i>R</i><sub>glass</sub></td><td class="num">0.29–0.32 (0.51)</td><td class="num">0.49–0.55 (0.64)</td><td class="num">0.61–0.65 (0.855)</td><td class="num">0.59–0.60 (0.80)</td></tr>
+<tr><td><i>R</i><sub>Cu</sub></td><td class="num">1.05</td><td class="num">0.92</td><td class="num">0.80</td><td class="num">0.67</td></tr>
+<tr><td><i>F</i> = <i>R</i><sub>glass</sub>/<i>R</i><sub>Cu</sub></td><td class="num">0.27–0.31</td><td class="num">0.53–0.60</td><td class="num">0.77–0.81</td><td class="num">0.88–0.90</td></tr>
+<tr><td>Lab <i>R</i> / sim <i>R</i><sub>Cu</sub> (the <i>F</i> the data need)</td><td class="num">0.49</td><td class="num">0.70</td><td class="num"><b>1.07</b></td><td class="num"><b>1.19</b></td></tr>
+<tr><td>Copper anode e⁻ fraction</td><td class="num">0.984</td><td class="num">0.838</td><td class="num">0.656</td><td class="num">0.568</td></tr>
+<tr><td>… lost on bottom-Cu underside</td><td class="num">0.001</td><td class="num">0.048</td><td class="num">0.172</td><td class="num">0.254</td></tr>
+<tr><td>… lost on lowest 100&nbsp;µm of wall</td><td class="num">0.012</td><td class="num">0.080</td><td class="num">0.130</td><td class="num">0.135</td></tr>
+<tr><td>Mean gain</td><td class="num">1.3×10<sup>5</sup></td><td class="num">3.6×10<sup>4</sup></td><td class="num">2.4×10<sup>4</sup></td><td class="num">2.2×10<sup>4</sup></td></tr>
+<tr><td>|<i>Q</i><sub>bottom</sub>| with glass [pC]</td><td class="num">3.2–3.3</td><td class="num">0.68–0.77</td><td class="num">0.29–0.32</td><td class="num">0.29–0.30</td></tr>
+</table>
+<p class="small">Precision: charges ±6–10&nbsp;%, <i>R</i> ±5&nbsp;% (±1&nbsp;% at 0.1&nbsp;mm), <i>F</i> ±0.002 (paired), copper fraction ±0.02. ESS 74–189 of 500 for the glass top charge, 455–556 of 1800 for the copper baseline.</p>
+
+<h3>6.5 What the results say</h3>
+<ol>
+<li><b>The glass produces a suppression of the right kind</b>: geometric, field-independent and steep below 0.5&nbsp;mm <span class="tag inf">inferred</span>.</li>
+<li><b>The full model does not reproduce <i>R</i>.</b> <i>R</i><sub>glass</sub> is 0.1–0.25 below the data at 0.2–1&nbsp;mm and roughly flat, because the simulated copper baseline falls.</li>
+<li><b>At 0.5 and 1&nbsp;mm the data need <i>F</i> &gt; 1</b> with the simulated <i>R</i><sub>Cu</sub>. The largest remaining error is therefore on the copper/transport side, or in the comparison itself.</li>
+<li><b>The top charge has the right shape but is 1.7–2.8× too high</b> at 0.2–1&nbsp;mm.</li>
+<li><b>0.1&nbsp;mm is a clear miss.</b> The real 0.1&nbsp;mm gap is almost certainly not a clean, uniform 10&nbsp;µm gap.</li>
+<li>With glass, the charge removed from the anode reappears on the bottom. A bottom readout would show <i>where</i> it goes, but not <i>which</i> mechanism moved it there: glass, readout impedance and copper hole-exit losses all put it on the bottom with the same sign.</li>
+</ol>
+
+<!-- ================================================================ -->
+<h2>7. What has been ruled out, and why</h2>
+<p>Each mechanism below was tested against the gap dependence. "Strength" says how firm the exclusion is, as judged in the study docs.</p>
+<table>
+<caption>Table 5. Excluded mechanisms.</caption>
+<tr><th style="width:20%">Mechanism</th><th style="width:22%">Test</th><th>Why it is excluded</th><th style="width:13%">Strength</th></tr>
+<tr><td>Transport-grid artefact at the copper edge</td><td>Raw neBEM vs grid; wall-release test</td><td>Real bug, and it caused the early over-extraction. Fixed: all runs since use raw neBEM.</td><td>Firm (fixed)</td></tr>
+<tr><td>Field mesh</td><td>Elements ×4; 10&nbsp;µm gap at 2&nbsp;021 vs 13&nbsp;938 elements</td><td>Field changes 1–2&nbsp;% (≤ 3.3&nbsp;% in the 10&nbsp;µm gap).</td><td>Firm</td></tr>
+<tr><td>Drift gap 1 vs 5&nbsp;mm</td><td>Field comparison</td><td>&lt; 1.4&nbsp;% change in hole and gap field.</td><td>Firm</td></tr>
+<tr><td>Electron attachment</td><td>CO₂ variation, Magboltz</td><td>Small and gap-flat.</td><td>Firm</td></tr>
+<tr><td>Avalanche space charge; ions reaching the anode</td><td>Self-field estimate; ion field lines incl. charged rim</td><td>~10³× too weak. Ions reach the anode only at 3–10&nbsp;pC per event (lab 0.2–0.8&nbsp;pC).</td><td>Firm (tested on the 0.4&nbsp;mm plate)</td></tr>
+<tr><td>Local-field (mean-avalanche) approximation</td><td>Weighted vs microscopic at the hole exit</td><td>Same corner loss.</td><td>Firm</td></tr>
+<tr><td>Gain level as cause of the falling baseline</td><td>Gain-matched run, Δ<i>V</i> 1.77&nbsp;kV</td><td>Same fall at ~10× lower gain (0.88/0.80/0.69, Cu 50&nbsp;µm).</td><td>Firm</td></tr>
+<tr><td>Copper-corner rounding</td><td>Radius 0–45&nbsp;µm, 0.4&nbsp;mm plate</td><td>Only 45&nbsp;µm gives a flat trend; all stay far below the data.</td><td>Moderate (real radius unknown; old geometry)</td></tr>
+<tr><td>FR4 charging-up, iterative</td><td>12 neBEM iterations at 0.1 and 0.5&nbsp;mm</td><td>No equilibrium; gain collapses 250–900×; extraction does not move toward the data.</td><td>Moderate</td></tr>
+<tr><td>FR4 charging-up, fully charged limit</td><td>Fit of wall charge for zero normal field, 12 wall bands + rims, 0.5&nbsp;mm</td><td>Clearing the wall needs 10–20&nbsp;nC/cm², which cuts the hole field to ~0.4× (no gain). The measured gain allows ≲ 1–2&nbsp;nC/cm², which lowers the wall field by only 10–15&nbsp;%. Even a perfect FR4 shield leaves the bottom-copper loss, so the baseline would still fall.</td><td>Moderate (uniform zones, square lattice, no charged avalanche run)</td></tr>
+<tr><td>Readout impedance / anode–bottom capacitance</td><td>Capacitive divider with DCB209A values</td><td>C<sub>AB</sub> 19–25&nbsp;pF at 0.1&nbsp;mm (glass) vs C<sub>in,eff</sub> 1.84&nbsp;nF → ≤ 1.3&nbsp;% loss. The data would need C<sub>in,eff</sub> ≈ 30–40&nbsp;pF, ~50× below spec.</td><td>Moderate (relies on the manual; not measured)</td></tr>
+<tr><td>Glass surface charging at 0.1&nbsp;mm</td><td>Estimate with ρ = 10<sup>10</sup>&nbsp;Ω·cm</td><td>Mean surface potential ≈ <i>J</i>ρ<i>b</i>. With 0.41&nbsp;pC × 10&nbsp;Hz on ≥ 1&nbsp;mm², it is ≈ 0.3&nbsp;V against 15&nbsp;V across the gap (≈ 2&nbsp;%).</td><td>Moderate (holds unless the irradiated spot is ≪ 1&nbsp;mm²)</td></tr>
+<tr><td>Electron extraction fraction as the observable</td><td>Ions followed in 3D</td><td>Wrong observable: the top collects only ~45&nbsp;% of the ions. Replaced by the induced charge on each electrode.</td><td>Firm (corrected)</td></tr>
+</table>
+
+<h3>7.1 Two exclusions worked through</h3>
+<h4>Readout impedance</h4>
+<p>The induced current on the anode can flow either into the preamplifier or through the capacitance <i>C</i><sub>AB</sub> between the anode pad and the grounded bottom copper. Both paths are capacitive, so the charge divides in a ratio that does not depend on frequency:</p>
+<div class="eq">$$\frac{Q_\text{CSA}}{Q} \;=\; \frac{C_\text{in,eff}}{C_\text{in,eff} + C_\text{AB}}.$$</div>
+<p>C<sub>in,eff</sub> ≈ 1.84&nbsp;nF is the 2&nbsp;nF HV coupling capacitor in series with 100&nbsp;nF and the virtual-ground capacitance <i>A</i><sub>0</sub><i>C</i><sub>f</sub> ≈ 30&nbsp;nF, all from the manual. A parallel-plate estimate gives <i>C</i><sub>AB</sub> of a few to a few tens of pF, so the loss is ≤ 1–3&nbsp;%. To lose 40&nbsp;%, the preamplifier input would have to be ~50× worse than specified. A test-pulse measurement (Section&nbsp;8) would turn this calculation into a measurement.</p>
+<h4>Glass surface charging</h4>
+<p>The 0.1&nbsp;mm point has only ~15&nbsp;V across the 10&nbsp;µm gap, so a few volts of charge on the glass would matter. Each event deposits about 1&nbsp;pC of electrons on the glass, which over a ~1&nbsp;mm² spot and a ~0.9&nbsp;pF gap capacitance is about a 1&nbsp;V step. That step decays with τ ≈ 80&nbsp;ms (Section&nbsp;3.3). An earlier version of this argument used τ = ε<sub>0</sub>ε<sub>r</sub>ρ ≈ 6&nbsp;ms, which is wrong for a charge facing a thin gap; the docs record this correction. The exclusion still holds for a different reason: the <i>mean</i> potential of the glass surface is set by the current density alone, <i>V</i> = <i>J</i>ρ<i>b</i> ≈ 0.3&nbsp;V, independent of τ. It would fail only if the irradiated spot were much smaller than 1&nbsp;mm², or if the rate per spot were much higher than assumed.</p>
+
+<!-- ================================================================ -->
+<h2>8. Open questions and proposed tests</h2>
+<p>Ranked by how much of the discrepancy each could carry <span class="tag inf">inferred</span>:</p>
+<ol>
+<li><b>Why the simulated copper baseline falls</b> (0.98 → 0.57). This is the largest error at 0.2–1&nbsp;mm. Untested candidates:
+  <ul>
+  <li>The <b>hexagonal lattice</b>: the farthest copper from a hole is 0.58&nbsp;mm in a hexagonal lattice against 0.71&nbsp;mm in the square one. A square-pitch-0.93&nbsp;mm proxy with the same hole density is prepared in <code>results/hex_proxy_p093/</code> but was parked. A true hexagonal cell needs a mirror-symmetric <i>p</i>/2 × (√3/2)<i>p</i> unit cell.</li>
+  <li>The real hole-exit profile: the copper was etched from 150&nbsp;µm, and the corner radius is unknown.</li>
+  <li>The <i>E</i><sub>ind</sub> mismatch at 0.5–1&nbsp;mm (Section&nbsp;4.3). At 0.2&nbsp;mm the copper fraction rises from 0.78 to 0.88 for <i>E</i><sub>ind</sub> 1 → 3&nbsp;kV/cm, so the field does matter for the baseline.</li>
+  </ul></li>
+<li><b>What the real 0.1&nbsp;mm gap looks like.</b> Spacer tolerance, glass and THGEM flatness, or partial contact would raise the effective gap and lower the gain. This has not been modelled.</li>
+<li><b>Absolute gain ~2× too high</b> at 0.2–1&nbsp;mm. Candidates: Penning transfer (0.405 is not measured for this mixture), the gas table, the lattice.</li>
+<li><b>Glass ε<sub>r</sub></b> is assumed, and it sets <i>F</i> directly (<i>F</i> at 0.2&nbsp;mm: 0.43/0.60/0.69 at ε<sub>r</sub> 4/8/12).</li>
+<li><b>Time window.</b> The simulation scores at 10&nbsp;µs, while the preamplifier decays with 100&nbsp;µs. <i>F</i> is stable over 5–20&nbsp;µs, but <i>R</i><sub>Cu</sub> and <i>Q</i><sub>top</sub> at the true readout time have not been checked.</li>
+</ol>
+
+<h3>8.1 Lab measurements that would settle most of this</h3>
+<table class="keep">
+<caption>Table 6. Proposed lab tests, cheapest first.</caption>
+<tr><th style="width:24%">Test</th><th>What it settles</th><th style="width:30%">Expected outcome</th></tr>
+<tr><td>Test pulse into the anode channel, detector connected, at 0.1&nbsp;mm and ≥ 1&nbsp;mm</td><td>Readout impedance</td><td>≤ 1.3&nbsp;% change if the manual is right; ~40&nbsp;% if impedance were the cause</td></tr>
+<tr><td>Bare copper anode at the same gaps</td><td>Measures <i>R</i><sub>Cu</sub> directly, which tests both <i>F</i> = <i>R</i><sub>glass</sub>/<i>R</i><sub>Cu</sub> and the simulated copper baseline</td><td>Simulation predicts <i>R</i><sub>Cu</sub> 1.05/0.92/0.80/0.67</td></tr>
+<tr><td>Gap and flatness at 0.1&nbsp;mm (feeler gauge, or capacitance across the gap)</td><td>Whether the 10&nbsp;µm assumption holds</td><td>A larger or non-uniform gap would explain part of the 0.1&nbsp;mm miss</td></tr>
+<tr><td>Glass ε<sub>r</sub> (capacitance of a known area)</td><td>Removes the main assumed input to <i>F</i></td><td>—</td></tr>
+<tr><td>Bottom-electrode readout at 0.1&nbsp;mm</td><td>Confirms that the missing charge is on the bottom</td><td>~3&nbsp;pC with glass; it cannot separate glass from impedance</td></tr>
+<tr><td><i>R</i> at <i>E</i><sub>ind</sub> 1.5 at 0.5 and 1&nbsp;mm (if not already available)</td><td>Like-for-like comparison with the simulation</td><td>—</td></tr>
+</table>
+
+<h3>8.2 Looking ahead</h3>
+<p>Some considerations beyond the immediate discrepancy <span class="tag inf">inferred</span>:</p>
+<ul>
+<li>For a detector design, the glass effect is a <b>feature to design around</b>, not a bug. The anode signal fraction is set by <i>g</i> versus <i>b</i>/ε<sub>r</sub>. A thinner or higher-ε<sub>r</sub> glass, or a gap well above ~0.5&nbsp;mm, keeps <i>F</i> ≳ 0.8 and makes the anode signal much less sensitive to gap variations. At small gaps, the strong sensitivity of both gain and <i>F</i> to the gap means gap flatness becomes a gain-uniformity requirement.</li>
+<li>The simulation chain (transport + paired replay) is validated and reusable. Once the copper baseline is understood, the same machinery can predict other readouts (strips, pads of different size, bottom-electrode readout) without new physics.</li>
+<li>If the hexagonal lattice turns out to matter, every earlier square-lattice result (charging, corner rounding, losses) would deserve a second look, because those exclusions were all made on the square cell.</li>
+<li>The provenance gaps listed in Section&nbsp;9 should be closed before any production run whose numbers are meant for publication.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2>9. Uncertainties and limitations</h2>
+<h3>9.1 On the lab side</h3>
+<ul>
+<li>No measurement uncertainties (statistical or systematic) were available for this report, for either <i>R</i> or <i>Q</i><sub>top</sub>.</li>
+<li>The <i>E</i><sub>ind</sub> of the <i>R</i> series may be 2.0 rather than 1.5&nbsp;kV/cm (Section&nbsp;4.3).</li>
+<li>The gap flatness over the pad was not measured. The 0.1&nbsp;mm point is the most exposed to this.</li>
+<li>Glass ε<sub>r</sub> and the quality of the glass rear contact are not measured.</li>
+</ul>
+<h3>9.2 On the simulation side</h3>
+<ul>
+<li><b>Geometry:</b> square lattice instead of hexagonal; ideal sharp copper corners; uniform planar gap.</li>
+<li><b>Physics:</b> uncharged FR4 and glass; Penning transfer 0.405 assumed; transport in the metal-anode field; charges scored at 10&nbsp;µs and not convolved with the preamplifier response.</li>
+<li><b>Statistics:</b> heavy-tailed weights. ESS 74–189 of 500 for the glass top charge, so the quoted ±6–10&nbsp;% bootstrap intervals may understate the real spread. <i>F</i> is robust because it is paired.</li>
+<li><b>Scope:</b> one induction field (1.5&nbsp;kV/cm); four gaps; a "quick test" (5 × 100 paths per gap), not the full gated production study, which was planned but interrupted.</li>
+<li><b>Provenance:</b> the copper-baseline binary (<code>../THGEM_corner</code>) is not under version control; some drivers live under the gitignored <code>results/</code>; the dense gas table is not in <code>gas/</code>. The glass-signal binary is commit <code>fb42296</code>.</li>
+</ul>
+<h3>9.3 On this report</h3>
+<ul>
+<li>The report was written from the repository docs (<code>anode_charge_fraction.md</code>, <code>STATUS.md</code>, <code>glass_signal_hypothesis.md</code>), the project's archived notes, and the two result tables named in the figure captions. No simulation was run for it.</li>
+<li>All plots except Fig.&nbsp;5 were redrawn from those tables, or are analytic (Fig.&nbsp;2) or schematic (Figs.&nbsp;1 and 3). The experimenter's original plots (<code>charge_ratio.pdf</code>, <code>top_charge.pdf</code>) were not available. The 2.0 and 2.5&nbsp;kV/cm top-charge curves in Fig.&nbsp;4 are approximate.</li>
+<li>The background sections (2–3) give standard textbook physics in simplified form; quoted typical values (W-value, drift velocities) are indicative.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2>10. How the study got here</h2>
+<p>Several inputs were corrected along the way. Each correction changed the numbers, and none explained the data on its own. This history is why older notes and plots disagree with this report.</p>
+<table>
+<caption>Table 7. Timeline.</caption>
+<tr><th style="width:17%">Date (2026)</th><th>Step</th></tr>
+<tr><td>≤ 29 Oct</td><td>0.4&nbsp;mm plate, copper anode: found and fixed the transport-grid artefact; switched to weighted mean avalanches and to collected charges. The simulation still disagreed most at small gaps. Record: <code>docs/extraction_ratio_investigation.md</code> (historical).</td></tr>
+<tr><td>30 Oct</td><td>Corner-rounding sweep (0–45&nbsp;µm): none matches.</td></tr>
+<tr><td>1 Nov</td><td>The real plate is 0.8&nbsp;mm. This removed an 80–300× gain mismatch, but the trend stayed opposite to the data.</td></tr>
+<tr><td>2–4 Nov</td><td>Iterative FR4 charging: no explanation.</td></tr>
+<tr><td>4 Nov</td><td>The measurements used the <b>glass anode</b>, so every copper-anode comparison had been the wrong reference. The glass signal method was built and validated.</td></tr>
+<tr><td>5–8 Nov</td><td>Glass quick test (Cu 50&nbsp;µm, gap from the copper): <i>F</i> alone matched the data at 0.1–0.5&nbsp;mm (0.52/0.64/0.80/0.89 at ε<sub>r</sub> 6; superseded). The copper baseline was found to fall with the gap; a gain-matched run showed this is geometric.</td></tr>
+<tr><td>9–10 Nov</td><td>Fully charged FR4 limit and readout impedance: both excluded.</td></tr>
+<tr><td>10–11 Nov</td><td><b>Real copper thickness (90&nbsp;µm) and gap convention</b> (gas gap <i>d</i> − 90&nbsp;µm). The 0.2–1&nbsp;mm shapes improved; 0.1&nbsp;mm became a clear miss, and the "<i>F</i> alone matches" reading no longer holds. Glass ρ = 10<sup>10</sup>&nbsp;Ω·cm.</td></tr>
+</table>
+<p class="small">Other corrected inputs: copper 35 → 50 → 90&nbsp;µm; drift gap 1 → 5&nbsp;mm; lab gain "≲ 2.8×10<sup>3</sup>" → measured top charge 0.24–0.83&nbsp;pC.</p>
+
+<!-- ================================================================ -->
+<h2>Appendix A. Glossary</h2>
+<table>
+<tr><th style="width:24%">Term</th><th>Meaning</th></tr>
+<tr><td>THGEM</td><td>Thick gaseous electron multiplier: a drilled, copper-clad PCB used as an avalanche stage.</td></tr>
+<tr><td>THWELL</td><td>A THGEM whose bottom face sits directly on the readout, closing the holes from below.</td></tr>
+<tr><td>Rim</td><td>Ring of copper etched back around each hole, exposing bare FR4.</td></tr>
+<tr><td>Induction gap</td><td>The gas gap between the THGEM bottom and the anode.</td></tr>
+<tr><td>Extraction / anode e⁻ fraction</td><td>Fraction of avalanche electrons that reach the anode.</td></tr>
+<tr><td>Ion backflow</td><td>Ions that drift back through the hole into the drift region.</td></tr>
+<tr><td>Weighting potential φ<sub><i>k</i></sub></td><td>Potential with electrode <i>k</i> at 1&nbsp;V, the others at 0, no free charges, dielectrics present.</td></tr>
+<tr><td>Shockley–Ramo theorem</td><td>Induced charge = <i>q</i> × change of weighting potential along the path.</td></tr>
+<tr><td>CSA</td><td>Charge-sensitive (pre)amplifier: integrates the induced current.</td></tr>
+<tr><td>neBEM</td><td>Nearly exact boundary element method; the field solver used in Garfield++.</td></tr>
+<tr><td>Magboltz</td><td>Program computing electron transport coefficients in gases.</td></tr>
+<tr><td>Penning transfer</td><td>Ionisation of one gas component by excited atoms of another.</td></tr>
+<tr><td>ESS</td><td>Effective sample size of a weighted sample, (Σ<i>w</i>)²/Σ<i>w</i>².</td></tr>
+<tr><td>Charging-up</td><td>Change of the field by charge accumulated on insulating surfaces.</td></tr>
+<tr><td><i>R</i>, <i>R</i><sub>Cu</sub>, <i>R</i><sub>glass</sub>, <i>F</i></td><td>See Section&nbsp;3.5.</td></tr>
+</table>
+
+<h2>Appendix B. Data and provenance</h2>
+<ul>
+<li>Study write-up: <code>docs/anode_charge_fraction.md</code>; run log: <code>docs/STATUS.md</code>; glass method: <code>docs/glass_signal_hypothesis.md</code>. Repository <code>lmoleri/THGEM-garfield</code>, commit <code>d431c49</code>.</li>
+<li>Copper baseline: <code>results/copper_baseline_gasgap/summary_cu90.csv</code> (binary <code>../THGEM_corner/build/thgem_sim</code>, unversioned; seeds 970–981).</li>
+<li>Glass signal: <code>results/glass_signal/quicktest_gasgap/summary_cu90.csv</code> (binary <code>fb42296</code>; seeds 661–695).</li>
+<li>10&nbsp;µm mesh check: <code>results/gap10um_meshcheck/</code>. Charged FR4 limit: <code>results/charged_equilibrium/</code>.</li>
+<li>Readout-impedance estimate: STATUS log entry of 2026-11-10 and project file <code>archive/readout_impedance_2026-11-10.md</code>.</li>
+<li><code>results/</code> is gitignored and lives only on the analysis machine.</li>
+</ul>
+
+<h2>Appendix C. References</h2>
+<ol class="small">
+<li>W. Shockley, "Currents to conductors induced by a moving point charge", J. Appl. Phys. 9 (1938) 635.</li>
+<li>S. Ramo, "Currents induced by electron motion", Proc. IRE 27 (1939) 584.</li>
+<li>A. Breskin et al., "A concise review on THGEM detectors", Nucl. Instrum. Meth. A 598 (2009) 107.</li>
+<li>W. Riegler, "Electric fields, weighting fields, signals and charge diffusion in detectors including resistive materials", JINST 11 (2016) P11002, arXiv:1602.07949 (Sections 4.2 and 8.1).</li>
+<li>Garfield++ simulation toolkit, CERN, garfieldpp.web.cern.ch.</li>
+<li>S. F. Biagi, "Monte Carlo simulation of electron drift and diffusion in counting gases under the influence of electric and magnetic fields", Nucl. Instrum. Meth. A 421 (1999) 234 (Magboltz).</li>
+<li>W. Blum, W. Riegler, L. Rolandi, <i>Particle Detection with Drift Chambers</i>, 2nd ed., Springer (2008): drift, diffusion, gas amplification and signal induction.</li>
+</ol>
+<p class="small">References are quoted from memory for orientation; check the bibliographic details before citing them formally.</p>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  renderMathInElement(document.body, {delimiters: [{left: "$$", right: "$$", display: true}, {left: "\\(", right: "\\)", display: false}]});
+  document.body.setAttribute("data-ready","1");
+});
+</script>
+</body>
+</html>
